@@ -229,6 +229,8 @@
   .preview-box { position: relative; }
   .preview-box[hidden] { display: none; }
   #custom-status { position: absolute; left: 8px; bottom: 6px; pointer-events: none; }
+  /* No preview to sit on (a file that could not be read): the line takes its own row. */
+  .preview-box:has(#custom-preview[hidden]) #custom-status { position: static; padding: 4px 0; }
   @media (max-width: 760px), (max-height: 520px) { .footnote { display: none; } }
   /* A phone upright: the fighters fill the width, so the menu takes the room over their
      heads, under the health bars, and their names go under their feet. */

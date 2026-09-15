@@ -207,6 +207,7 @@
     if (!!m.air !== f.y > 0) return false;
     if (m.wave) { if (f.y > 0 || clock - f.specialAt < m.again) return false; f.specialAt = clock; if (m.spin) sfx.spin(); else if (m.roll) sfx.roll(); else sfx.shock(); }
     f.hits = 0; f.hitAt = -1;
+    if (m.fist === 'rarm') f.limb = pickSide(f, 'arm'); else if (m.fist === 'rleg_foot') f.limb = pickSide(f, 'leg');
     Object.assign(f, { action: move, t: 0, hit: false, cooldown: m.duration });
     // The limb swings with a whoosh: short and high for a punch, longer and lower for a
     // kick. A guest hears its own fighter's here and the host's through the event.
@@ -359,7 +360,8 @@
   // The striking end of the limb (see makeForm), where it is now.
   function strikePoints(f, move) {
     const m = MOVES[move], c = f.coords;
-    const idx = m.fist === 'rarm' ? f.form.fist : m.fist === 'arms' ? [...f.form.fist, ...f.form.fistL] : m.fist === 'torso' ? f.form.torso : m.fist === 'wave' ? [] : move === 'kick' ? f.form.frontKick : f.form.kick;
+    const side = sideOf(f, move);
+    const idx = m.fist === 'rarm' ? (side === 'l' ? f.form.fistL : f.form.fist) : m.fist === 'arms' ? [...f.form.fist, ...f.form.fistL] : m.fist === 'torso' ? f.form.torso : m.fist === 'wave' ? [] : side === 'l' ? f.form.frontKick : f.form.kick;
     return idx.map(i => c[i]);
   }
 
@@ -404,13 +406,22 @@
   const mobility = f => Math.max(0.2, 1 - 0.5 * worstLeg(f) - 0.2 * Math.min(legDamage(f, 'l'), legDamage(f, 'r')) - 0.25 * meanUnfold(f));
   // Which limb a move is thrown with: the right arm punches, the front (left) leg throws
   // the standing kick, the back (right) leg the rest, the spin uses both arms.
+  // Which arm or leg a strike uses is chosen as it begins (attack): the sounder of the
+  // two, or either at random when they are as sound as each other, so a fighter with
+  // one battered leg kicks with the other and a whole one does not always lead with
+  // the same. f.limb is 'l' or 'r'; a move's default side stands where none was chosen.
+  const sideOf = (f, move) => f.limb || (move === 'kick' ? 'l' : 'r');
+  const pickSide = (f, kind) => {
+    const dl = kind === 'arm' ? armDamage(f, 'l') : legDamage(f, 'l'), dr = kind === 'arm' ? armDamage(f, 'r') : legDamage(f, 'r');
+    return Math.abs(dl - dr) < 0.05 ? (Math.random() < 0.5 ? 'l' : 'r') : dl < dr ? 'l' : 'r';
+  };
   const limbOf = (f, move) => {
     const m = MOVES[move];
     if (!m) return f.form.legIdx;
-    if (m.fist === 'rarm') return f.form.armSide.r;
+    if (m.fist === 'rarm') return f.form.armSide[sideOf(f, move)];
     if (m.fist === 'arms' || m.fist === 'wave') return f.form.armIdx;
     if (m.fist === 'torso') return f.form.torso;
-    return move === 'kick' ? f.form.legSide.l : f.form.legSide.r;
+    return f.form.legSide[sideOf(f, move)];
   };
   // A strike comes from a limb: the more that limb, and the protein as a whole, has
   // unfolded, the slower it plays out (up to ~2.4x) and the less it hurts (down to a quarter).
@@ -2080,7 +2091,7 @@
   // motion, the numbers on the HUD, what the overlay says, and what happened since the
   // last packet (hits, callouts, the finisher, sounds). The unfolding travels only when
   // it changed. About 2 KB a packet.
-  const SNAP = ['x', 'y', 'vx', 'vy', 'facing', 'hp', 'crouch', 'guard', 'sinceHit', 'squat', 'jumpDir', 'upReleased', 'landing', 'landPower',
+  const SNAP = ['limb', 'x', 'y', 'vx', 'vy', 'facing', 'hp', 'crouch', 'guard', 'sinceHit', 'squat', 'jumpDir', 'upReleased', 'landing', 'landPower',
     'fatigue', 'jit', 'settle', 'action', 't', 'hit', 'hits', 'hitAt', 'stun', 'cooldown', 'limp', 'seed', 'lastLow', 'blockStun', 'blockHold', 'heldBy', 'heldProg', 'tumble', 'combo', 'comboAir', 'specialAt'];
   // What a guest keeps its own for the fighter it drives: its keys have already moved
   // it, and the host's word on where it was a moment ago would only drag it back.

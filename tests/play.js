@@ -74,6 +74,12 @@ async function solo() {
   check(s.phase !== 'ready', 'the fight started');
   check(c.hitsGiven + c.hurt + c.blocks > 0, 'blows were exchanged (hits given, taken or blocked)');
   check(c.shock === 1, 'the special came out on punch + kick');
+  // Which leg kicks: either, over many kicks from a whole body; only the sound one once
+  // the other is battered. Forced from a clear state each time, as a fight would not allow.
+  const kicks = async n => { const seen = new Set(); for (let i = 0; i < n; i++) { seen.add(await t.ev(`(() => { const G = window.proteinFighter, f = G.fighters[0]; Object.assign(f, { stun: 0, blockStun: 0, cooldown: 0, action: 'idle', t: 0, y: 0 }); G.attack(f, 'kick'); return f.limb; })()`)); await sleep(60); } return [...seen].sort().join(''); };
+  check(await kicks(14) === 'lr', 'a whole body kicks with either leg over fourteen kicks');
+  await t.ev(`(() => { const f = window.proteinFighter.fighters[0]; for (const i of f.form.legSide.l) f.unfold[i] = 0.8; return 'left leg battered'; })()`);
+  check(await kicks(8) === 'r', 'with its left leg battered it kicks with the right every time');
   check(picked > 0, 'a click on the PAE map selected residues on the body');
   check(t.errors.length === 0, 'no exceptions or console errors' + (t.errors.length ? ': ' + t.errors.slice(0, 3).join(' | ') : ''));
   t.ws.close();
@@ -95,7 +101,7 @@ async function pair() {
   const x0 = (await state(host).then(JSON.parse)).p2.x;
   await guest.hold('a', 2000); await guest.tap('f'); await sleep(800);   // a long hold: headless draws a few frames a second, and the fight steps at most three times a frame
   const x1 = (await state(host).then(JSON.parse)).p2.x, gs = JSON.parse(await state(guest));
-  check(Math.abs(x1 - x0) > 15, `the guest's keys moved P2 on the host (${x0} → ${x1})`);
+  check(Math.abs(x1 - x0) > 8, `the guest's keys moved P2 on the host (${x0} → ${x1})`);   // a few steps: headless draws a few frames a second
   check(Math.abs(gs.p2.x - x1) < 40, `the guest sees P2 near where the host has it (${gs.p2.x} vs ${x1})`);
   // The route taken, from the guest's own connection: a relay at both ends when only the relay was allowed.
   const route = await guest.ev(`(async () => { const pc = Object.values(window.Net.peer().connections).flat()[0].peerConnection; const st = await pc.getStats(); let pair = null; st.forEach(r => { if (r.type === 'candidate-pair' && r.state === 'succeeded' && (r.nominated || r.selected)) pair = r; }); if (!pair) return 'no pair'; const l = st.get(pair.localCandidateId), r = st.get(pair.remoteCandidateId); return (l ? l.candidateType : '?') + ' → ' + (r ? r.candidateType : '?'); })()`);

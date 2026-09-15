@@ -350,7 +350,7 @@
       return -1.5 * (p[1] - torsoBottom) - 0.7 * Math.hypot(p[0] - hx, p[2]);
     };
     const used = new Set(), slots = [];
-    for (const want of need) for (const side of [-1, 1]) {
+    for (const { want, sides } of need) for (const side of sides) {
       let best = null, bs = -Infinity;
       for (const i of [0, N - 1]) if (ok(i) && !used.has(i)) { const sc = score(i, want, side) + TERMINUS_BONUS[want]; if (sc > bs) { bs = sc; best = { i, terminus: true }; } }
       // a loop residue, exposed, with room to insert after it (i and i+1 both free)
@@ -388,7 +388,7 @@
     // left leg grown from the right side tilts left through the right leg, the two
     // crossed (hemoglobin, ubiquitin). The lower x is the left of each pair.
     const plan = planAnchors(coords, sec, breaks, taken, torsoBottom, torsoTop, need, hipX);
-    for (const want of need) {
+    for (const { want } of need) {
       const pair = plan.filter(s => s.want === want && s.at);
       if (pair.length === 2 && coords[pair[0].at.i][0] > coords[pair[1].at.i][0]) [pair[0].side, pair[1].side] = [pair[1].side, pair[0].side];
     }
@@ -512,9 +512,12 @@
     // the insertion.
     const special = chooseSpecial(sec, trace.plddts);   // the protein's own residues: chosen before anything is grown
     const meanPlddt = Math.round(mean(trace.plddts));
+    // Legs come as a pair: one found alone is given up and both grown, so they stand
+    // alike. An arm found alone keeps its place and the other is grown to it (a body
+    // was left one-armed, its strikes landing with the arm it had).
     const need = [];
-    if (!(roles.lleg && roles.rleg)) { need.push('leg'); delete roles.lleg; delete roles.rleg; }
-    if (!roles.larm && !roles.rarm) need.push('arm');
+    if (!(roles.lleg && roles.rleg)) { need.push({ want: 'leg', sides: [-1, 1] }); delete roles.lleg; delete roles.rleg; }
+    if (!roles.larm || !roles.rarm) need.push({ want: 'arm', sides: [!roles.larm ? -1 : null, !roles.rarm ? 1 : null].filter(v => v !== null) });
     let grown = {}, grownPlddt = null;
     if (need.length) {
       const g = growLimbs(coords, trace.plddts, trace.breaks, sec, roles, torsoBottom, torsoTop, need);

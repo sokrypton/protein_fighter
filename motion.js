@@ -190,12 +190,15 @@
         T.legs = { l: [l[0], l[1], l[1]], r: [r[0], r[1], r[1]] };
       };
 
+      // Which arm or leg a strike uses is the game's choice (f.limb, the sounder of the two
+      // or either); a move's own side stands where none was made.
+      const armSide = f.limb || 'r', otherArm = armSide === 'l' ? 'r' : 'l', legSide = f.limb || (pose === 'kick' ? 'l' : 'r');
       if (pose === 'punch' || pose === 'lowpunch' || pose === 'airpunch' || pose === 'straight') {
         // A damaged arm does not straighten all the way, and the body puts less behind it.
-        const ar = 1 - 0.45 * armD.r;
-        T.rarmU = -(1 - s * ar); T.rarmL = 0.95 * (1 - s * ar);
+        const ar = 1 - 0.45 * armD[armSide];
+        T[armSide + 'armU'] = -(1 - s * ar); T[armSide + 'armL'] = 0.95 * (1 - s * ar);
         T.head += s * 0.15;   // eyes on the target
-        if (pose === 'straight') { T.pitch = s * 0.35 * ar; T.fwd = s * 14 * ar; T.larmU = -0.65 + s * 0.3; }   // the whole body behind it
+        if (pose === 'straight') { T.pitch = s * 0.35 * ar; T.fwd = s * 14 * ar; T[otherArm + 'armU'] = -0.65 + s * 0.3; }   // the whole body behind it
         if (pose === 'punch') { T.pitch = s * 0.2; T.fwd = s * 5 * ar; }
         if (pose === 'lowpunch') T.low = 1;
         if (pose === 'airpunch') airLegs();
@@ -209,8 +212,8 @@
         // The front leg kicks (a lead-leg front kick: chambered, then driven out), the
         // back leg planted.
         const legR = 0.5 + 0.5 * kr, chamber = ease(f.t / 0.06) * (1 - s);
-        const [bt, bs] = restIK('l', T.low * (1 - clamp01(chamber + s)));
-        T.legs = { l: [bt + legR * (chamber * 1.5 + s * 1.75), bs + legR * (-chamber * 1.3 + s * 1.65), legR * s * 0.9] };
+        const [bt, bs] = restIK(legSide, T.low * (1 - clamp01(chamber + s)));
+        T.legs = { [legSide]: [bt + legR * (chamber * 1.5 + s * 1.75), bs + legR * (-chamber * 1.3 + s * 1.65), legR * s * 0.9] };
         T.pitch = kr * s * 0.5;
         T.larmU = -0.65 - kr * s * 0.55; T.larmL = 1.15 - kr * s * 0.75;
         T.rarmU = -1 - kr * s * 0.9; T.rarmL = 0.95 - kr * s * 1.7;
@@ -218,8 +221,8 @@
       } else if (pose === 'roundhouse') {
         // The rear leg swung round and up, high, the body turning into it and leaning back.
         const legR = 0.5 + 0.5 * kr, chamber = ease(f.t / 0.08) * (1 - s);
-        const [bt, bs] = restIK('r', T.low * (1 - clamp01(chamber + s)));
-        T.legs = { r: [bt + legR * (chamber * 1.65 + s * 2.1), bs + legR * (-chamber * 1.1 + s * 1.9), legR * s * 1.0] };
+        const [bt, bs] = restIK(legSide, T.low * (1 - clamp01(chamber + s)));
+        T.legs = { [legSide]: [bt + legR * (chamber * 1.65 + s * 2.1), bs + legR * (-chamber * 1.1 + s * 1.9), legR * s * 1.0] };
         T.pitch = kr * s * 0.6; T.fwd = s * 4;
         T.larmU = -0.65 - kr * s * 0.7; T.larmL = 1.15 - kr * s * 0.9;
         T.rarmU = -1 - kr * s * 1.0; T.rarmL = 0.95 - kr * s * 1.8;
@@ -235,14 +238,14 @@
       } else if (pose === 'lowkick') {
         // From the deep crouch, the back leg sweeps out along the floor.
         T.low = 1;
-        const [bt, bs] = restIK('r');
-        T.legs = { r: [bt + kr * s * (1.1 - bt), bs + kr * s * (1.45 - bs), bs + kr * s * (1.4 - bs)] };
+        const [bt, bs] = restIK(legSide);
+        T.legs = { [legSide]: [bt + kr * s * (1.1 - bt), bs + kr * s * (1.45 - bs), bs + kr * s * (1.4 - bs)] };
         T.pitch = 0.05 + kr * s * 0.05;
         T.larmU = -0.3; T.rarmU = -0.4; T.larmL = 1.5; T.rarmL = 1.45;
       } else if (pose === 'airkick') {
         // From the tuck, stamp the back leg down and forward.
         airLegs();
-        T.legs.r = [0.45 + kr * s * 0.3, -1.2 + kr * s * 2.1, kr * s * 0.9];
+        T.legs[legSide] = [0.45 + kr * s * 0.3, -1.2 + kr * s * 2.1, kr * s * 0.9];
         T.pitch = kr * s * 0.35;
         T.larmU = -0.3; T.rarmU = -1.2;
       } else if (pose === 'roll') {

@@ -72,6 +72,10 @@ after that (the status line then says "no relay"). A TURN server of your own can
 supplied instead through `?turn=`, and `?relay=1` allows only the relay. A watcher's link is the join link
 with `&watch=1` on the end.
 
+Which arm or leg a strike uses is chosen as it begins: the sounder of the two, or
+either at random when they are as sound as each other, so a fighter with one battered
+leg kicks with the other and a whole one does not always lead with the same.
+
 | | P1 (left hand) | P2 (right hand) |
 | --- | --- | --- |
 | move | W A S D | ↑ ← ↓ → |
@@ -193,7 +197,8 @@ parser the viewer uses, and `custom_pdb.js` makes a fighter of the C-alpha trace
 - its protruding stretches found (exposed, reaching out beyond the body, running out
   and back at most once, built of helix or strand) and given roles by which way they
   point: up a head, down legs, across arms; the rest is the torso;
-- what it lacks grown out of its own chain: every free terminus and every surface
+- what it lacks grown out of its own chain (legs as a pair, one found alone given up
+  and both grown; an arm found alone kept, the other grown to it): every free terminus and every surface
   loop is scored for the limb (for a leg the lowest and the nearest to where a hip
   belongs, a little to its own side of the middle and on the fighting plane, so a long
   body's legs stand close together and its kicks pass its own front; for an arm the

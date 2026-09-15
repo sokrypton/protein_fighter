@@ -569,10 +569,11 @@
       name: 'arena', style, orient: false, controls: false, play: false,
       select: false, box: false, biounit: false,
       // ortho under 0.5: a touch more perspective. detail: subdivisions per helix residue,
-      // 4 py2Dmol's default; the mesh update costs in proportion, so a phone gets less.
+      // 4 py2Dmol's default, 2 its floor: the floor here, for a chunkier, retro cartoon
+      // (and the mesh update costs in proportion); ?detail=3 or 4 on the address to compare.
       // gpuDirect (py2Dmol's default, said here so it is seen): its GL canvas sits in the
       // page under its own, rather than being copied into it every frame.
-      rendering: { width: presetWidth * RIBBON_WIDTH, ortho: 0.4, detail: PHONE ? +(new URLSearchParams(location.search).get('detail') || 3) : 4, gpuDirect: true },
+      rendering: { width: presetWidth * RIBBON_WIDTH, ortho: 0.4, detail: +(new URLSearchParams(location.search).get('detail') || 2), gpuDirect: true },
     });
     applyColour();
     // No ground of its own: the page's floor sits behind the proteins, not over them.
@@ -1721,6 +1722,7 @@
   const keyName = e => e.key.toLowerCase();
   addEventListener('keydown', e => {
     const k = keyName(e);
+    if (k === 'escape' && !$('custom-modal').hidden) { e.preventDefault(); closeCustomModal(); return; }
     if (!route(k) && !['escape', ' ', 'enter'].includes(k)) return;
     e.preventDefault();
     light(k, true);
@@ -1766,10 +1768,9 @@
   const customSpec = [null, null];             // what each player fights as, for a guest joining
   function openCustomModal(player = 1) {
     customFor = player;
-    $('btn-load-custom').textContent = `FIGHT AS P${player + 1}`;
     $('custom-modal').hidden = false;
     $('custom-status').hidden = !pendingCustom;
-    $('btn-load-custom').disabled = !pendingCustom;
+    $('custom-actions').hidden = !pendingCustom;
     showPreview(pendingCustom);
   }
   function closeCustomModal() { $('custom-modal').hidden = true; }
@@ -1794,9 +1795,9 @@
     const text = previewText(res), mode = { rainbow: 'rainbow', ss: 'ss' }[colour] || 'deepmind';
     try {
       if (!preview) {
-        // Drawn at one device pixel per CSS pixel and with a coarse cartoon: it is a
-        // small picture that turns, and the pixel ratio is read once when the viewer
-        // is made (parts/viewport.js), so the arena's own is not touched.
+        // Drawn at one device pixel per CSS pixel (the ratio is read once when the
+        // viewer is made, parts/viewport.js, so the arena's own is not touched) and at
+        // the cartoon's floor of detail, as the arena is.
         const style = theme === 'dark' ? '3d' : 'richardson', presetWidth = window.py2dmolCartoon?.LOOK_DEFAULTS?.[style]?.width ?? 3;
         const dpr = window.canvasDPR; window.canvasDPR = 1;
         try {
@@ -1824,11 +1825,11 @@
       res.title = extra.title || '';
       pendingCustom = res;
       statusEl.innerHTML = describeCustom(res);
-      $('btn-load-custom').disabled = false;
+      $('custom-actions').hidden = false;
       showPreview(res);
     } catch (err) {
       statusEl.innerHTML = `<span style="color:#e55">${esc(err.message)}</span>`;
-      $('btn-load-custom').disabled = true;
+      $('custom-actions').hidden = true;
       pendingCustom = null;
       showPreview(null);
     }
@@ -1845,7 +1846,8 @@
     $('pick-custom-' + i).textContent = String(spec.name).toUpperCase().slice(0, 10);
   }
   const customWire = spec => ({ name: spec.name, rigData: spec.rigData, special: spec.special, pae: spec.pae ? Array.from(spec.pae) : null, roles: spec.roles, legsAdded: spec.legsAdded, residues: spec.residues, hasPlddt: spec.hasPlddt, meanPlddt: spec.meanPlddt });
-  $('btn-cancel-custom').onclick = () => closeCustomModal();
+  // No CANCEL: a click on the veil, or Escape, leaves the card.
+  $('custom-modal').onclick = e => { if (e.target === $('custom-modal')) closeCustomModal(); };
 
   // A few to try, by accession: the presets fill the field and fetch, so they work from
   // any page that reaches the archives, a file opened straight from disk included.

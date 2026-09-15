@@ -31,7 +31,7 @@ const check = (ok, what) => { console.log((ok ? '  ok   ' : '  FAIL ') + what); 
   check(await ev(`!document.getElementById('custom-modal').hidden`), 'the custom-protein panel opened');
   // the file, dropped on the panel as a file is: no network needed here
   await ev(`(async () => { const text = await (await fetch('tests/structures/gfp.pdb')).text(); const dt = new DataTransfer(); dt.items.add(new File([text], 'gfp.pdb')); document.getElementById('drop-zone').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); return 'dropped'; })()`);
-  for (let i = 0; i < 60 && (await ev(`document.getElementById('btn-load-custom').disabled`)); i++) await sleep(250);
+  for (let i = 0; i < 60 && (await ev(`document.getElementById('custom-actions').hidden`)); i++) await sleep(250);
   const status = await ev(`document.getElementById('custom-status').innerText`);
   check(/238 residues/.test(status) && /pLDDT 97/.test(status), 'GFP was read from the dropped file: 238 residues, mean pLDDT 97');
   check(/HURRICANE/.test(status), 'a small protein, so its special is the hurricane spin');

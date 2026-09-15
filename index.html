@@ -218,9 +218,12 @@
   #custom-preview { width: 100%; height: min(320px, 45vh); border-radius: 8px; overflow: hidden; touch-action: none; cursor: grab; }
   #custom-preview[hidden] { display: none; }
   #custom-preview canvas { width: 100% !important; height: 100% !important; }
+  /* Once a structure is in: FIGHT, in the AlphaFold blue, and nothing else (a click on
+     the veil or Escape leaves the card). */
   .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
-  .modal-actions button { padding: 7px 16px; font-size: 11px; border-radius: 6px; }
-  #btn-cancel-custom { background: transparent; color: var(--ink); }
+  .modal-actions[hidden] { display: none; }
+  #btn-load-custom { padding: 9px 22px; font-size: 12px; border-radius: 6px; background: #0d57d3; color: #fff; border-color: #0d57d3; letter-spacing: 2px; }
+  #btn-load-custom:hover { background: #1a66e6; }
   @media (max-width: 760px), (max-height: 520px) { .footnote { display: none; } }
   /* A phone upright: the fighters fill the width, so the menu takes the room over their
      heads, under the health bars, and their names go under their feet. */
@@ -307,7 +310,7 @@
       <div class="fetch-row">
         <input id="uniprot-input" placeholder="1UBQ, P69905, or drop a file" spellcheck="false" autocomplete="off" aria-label="PDB id or UniProt accession">
         <button type="button" id="btn-fetch-af">FETCH</button>
-        <button type="button" id="btn-browse">FILE</button>
+        <button type="button" id="btn-browse">UPLOAD</button>
         <input type="file" id="file-input" accept=".pdb,.ent,.cif,.mmcif,.mcif" style="display:none">
       </div>
       <div class="preset-row">
@@ -318,9 +321,8 @@
       </div>
       <div id="custom-preview" hidden aria-label="The fighter as it will stand; drag to turn it"></div>
       <div id="custom-status" hidden></div>
-      <div class="modal-actions">
-        <button type="button" id="btn-cancel-custom">CANCEL</button>
-        <button type="button" id="btn-load-custom" disabled>FIGHT</button>
+      <div class="modal-actions" id="custom-actions" hidden>
+        <button type="button" id="btn-load-custom">FIGHT</button>
       </div>
     </div>
   </div>

@@ -172,9 +172,10 @@ goes full screen, on the phone's side, where the browser allows it (Android, the
 desktops); iOS has no full-screen API for a page, and there Add to Home Screen gives
 the same: the manifest opens the game full screen in landscape. A phone is drawn lighter to keep
 the fight at speed: the cartoon at most thirty times a second while the fight itself
-steps at sixty, at a pixel ratio of 1.5 at most, with three subdivisions per helix
-residue instead of four (`?detail=2` or `4` on the address to try others), and the
-PAE maps refreshed a quarter as often. Everywhere, a frame that has fallen behind
+steps at sixty, at a pixel ratio of 1.5 at most, and the PAE maps refreshed a quarter
+as often. Everywhere the cartoon is drawn at py2Dmol's floor of two subdivisions per
+helix residue, a chunkier, retro look that also costs half of the default four
+(`?detail=3` or `4` on the address to compare). Everywhere, a frame that has fallen behind
 steps at most three times to catch up, a moment of slow motion rather than a spiral.
 `?fps` on the address shows, under the timer, frames and draws a second and the script
 cost of each, to read off a phone.
@@ -214,8 +215,9 @@ py2Dmol draws as coil and the physics pulls apart. The grown legs are sized to t
 torso instead. Up to 3000 residues. The card is mostly a preview: the built body as it
 will stand, in a viewer of its own with the model's pLDDT colours, turning slowly until
 dragged, drawn at one pixel per CSS pixel with a coarse cartoon while the arena holds
-still behind the card, so a fighter can be looked over before FIGHT; a line under it
-gives the name, size, pLDDT and special. Over a REMOTE link a custom fighter is sent to
+still behind the card, so a fighter can be looked over; a line under it gives the
+name, size, pLDDT and special, and a blue FIGHT appears once a structure is in (a click
+on the veil, or Escape, leaves the card). Over a REMOTE link a custom fighter is sent to
 the other side when it is chosen, or when a newcomer joins; a guest loads its own.
 
 Begun by Ian Anderson (github.com/ianandersonlol/protein_fighter): the parsing, the

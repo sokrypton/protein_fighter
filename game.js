@@ -253,10 +253,17 @@
     // A hit breaks the helices over a few frames rather than in one.
     for (let i = 0; i < N; i++) f.soft[i] += (f.unfold[i] - f.soft[i]) * 0.2;
     f.jit += ((f.hp === 0 ? 11 : 5) - f.jit) * 0.05;
+    // Each dent's strength this tick is a function of its age alone, the residue only
+    // saying how much of it to take (hit.w): the exponential and the sine were evaluated
+    // once per dent PER RESIDUE, a thousand of each a tick on a big body mid-fight.
+    const dents = f.dents, nDent = dents.length;
+    let dAmp = f.form.dentAmp;
+    if (nDent && (!dAmp || dAmp.length < nDent)) dAmp = f.form.dentAmp = new Float64Array(Math.max(8, nDent));
+    for (let h = 0; h < nDent; h++) { const hit = dents[h]; dAmp[h] = hit.dir * hit.amp * Math.exp(-DENT_DECAY * hit.t) * Math.sin(DENT_BOUNCE * hit.t); }
     for (let i = 0; i < N; i++) {
       const q = p[i], d = Math.max(0, f.soft[i] - (f.initUnfold ? f.initUnfold[i] : 0));   // the jitter is damage, not the model's own loose stretches
       // The dent grows in over a few frames, then bounces back.
-      for (const hit of f.dents) q[0] += hit.dir * hit.amp * Math.exp(-DENT_DECAY * hit.t) * Math.sin(DENT_BOUNCE * hit.t) * hit.w[i];
+      for (let h = 0; h < nDent; h++) q[0] += dAmp[h] * dents[h].w[i];
       if (d < 0.01) continue;
       // A fixed offset, not a wobble: it breaks the helix, then holds still. Stronger once
       // knocked out, so the heap is a tangle rather than a tidy kneel.

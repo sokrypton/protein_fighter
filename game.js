@@ -60,9 +60,14 @@
   // The PAE map: PAE_BIN residues a pixel each way on the built-in fighters, more on a
   // big custom protein so the map stays 64 pixels a side at most; and on a big protein
   // only every `stride`-th residue is aligned on (a row), every residue still scored
-  // (the columns), so the update costs about 400 residues' worth of rows whatever the
-  // size rather than the square of it.
+  // (the columns), so the update costs a couple of rows per pixel of the map whatever
+  // the size rather than the square of it.
   const PAE_BIN = 4, PAE_SIDE = 64, PAE_ROWS = 400;
+  // ...and how many sampled rows fall in one pixel of the map. The rows are the
+  // expensive half: each is compared against every residue, twice (the live pose and the
+  // undamaged one), so 400 rows on a 689-residue fighter is 550,000 comparisons an update
+  // to fill 63 pixels. Two rows a pixel is what the average needs.
+  const PAE_ROWS_PER_PIXEL = 2;
   function makeForm(name, data) {
     const rig = new DomainRig(data), n = rig.n, D = rig.domains;
     const motion = window.Motion.create(rig, { MOVES, JUMP_V, JUMP_VX, SQUAT, LANDING });
@@ -91,7 +96,8 @@
     let fist = (D.rarm || []).filter((_, k) => reach[k] > 0.64);
     let fistL = (D.larm || []).filter((_, k) => reachL[k] > 0.64);
     if (!fist.length) fist = fistL; if (!fistL.length) fistL = fist;
-    const paeBin = Math.max(PAE_BIN, Math.ceil(n / PAE_SIDE)), pb = Math.ceil(n / paeBin), stride = Math.max(1, Math.ceil(n / PAE_ROWS));
+    const paeBin = Math.max(PAE_BIN, Math.ceil(n / PAE_SIDE)), pb = Math.ceil(n / paeBin);
+    const stride = Math.max(1, Math.ceil(n / Math.min(PAE_ROWS, pb * PAE_ROWS_PER_PIXEL)));
     const paeCount = new Float32Array(pb * pb);
     const paeSum = new Float32Array(pb * pb);
     for (let i = 0; i < n; i += stride) for (let j = 0; j < n; j++) paeCount[(i / paeBin | 0) * pb + (j / paeBin | 0)]++;

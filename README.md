@@ -199,7 +199,9 @@ parser the viewer uses, and `custom_pdb.js` makes a fighter of the C-alpha trace
   body's legs stand close together and its kicks pass its own front; for an arm the
   furthest out at mid height), a terminus with a modest bonus since continuing a free
   end adds no cut, and the best wins; a terminus is continued as an alpha helix, a
-  loop extended as a pair of strands, out and back; at least one limb takes a
+  loop extended as a pair of strands, out and back (a leg's two strands sit one in
+  front of the other, so the leg reads as a leg from the side, where the fight is
+  watched); at least one limb takes a
   terminus; a grown limb is built to ideal geometry and carries pLDDT 100; a limb
   grows where its anchor is,
   so a body may come out lopsided, as its shape gives, and each leg is made long enough

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="12" fill="#000"/>
+  <!-- a helix, coiling up the icon, in AlphaFold's confident blue -->
+  <path d="M18 54c10-4 10-10 0-14s-10-10 0-14 10-10 0-14" fill="none" stroke="#0d57d3" stroke-width="6" stroke-linecap="round"/>
+  <path d="M46 54c-10-4-10-10 0-14s10-10 0-14-10-10 0-14" fill="none" stroke="#fd7d4d" stroke-width="6" stroke-linecap="round" opacity="0.9"/>
+</svg>

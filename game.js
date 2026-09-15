@@ -1633,14 +1633,37 @@
     startViewer(fighters[0].coords, fighters[1].coords);
   };
 
-  // The window resized: py2Dmol resizes its canvas, but the cartoon it holds on the GPU
+  // The stage resized: py2Dmol resizes its canvas, but the cartoon it holds on the GPU
   // for in-place updates keeps the old projection, so once the resizing settles the
-  // scene is rebuilt at the new size, as it is for a change of theme.
+  // scene is rebuilt at the new size, as it is for a change of theme. Watched on the
+  // stage itself rather than the window: a phone turning on its side fires resize
+  // before its layout has settled, and a viewer built from that measure stayed small
+  // once the turn finished. The observer reports the size the stage actually ends at,
+  // and fitStage below checks the canvas against it once a second regardless.
   let resizeTimer = null;
-  addEventListener('resize', () => {
+  function rebuildSoon() {
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => { if (fighters) startViewer(fighters[0].coords, fighters[1].coords); }, 150);
-  });
+    resizeTimer = setTimeout(() => { resizeTimer = null; if (fighters) startViewer(fighters[0].coords, fighters[1].coords); }, 150);
+  }
+  new ResizeObserver(rebuildSoon).observe($('stage'));
+  let fitAt = 0;
+  function fitStage(now) {
+    if (now - fitAt < 1000 || resizeTimer) return;
+    fitAt = now;
+    const st = $('stage'), cv = st.querySelector('canvas');
+    if (cv && (cv.clientWidth !== st.clientWidth || cv.clientHeight !== st.clientHeight)) rebuildSoon();
+  }
+
+  // Full screen where the browser offers it (Android, the desktops; iOS has none for a
+  // page, and there the home-screen app is the way, see the manifest), on its side.
+  if (document.fullscreenEnabled && document.documentElement.requestFullscreen) {
+    $('full').hidden = false;
+    $('full').onclick = () => {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen().then(() => screen.orientation?.lock?.('landscape').catch(() => {})).catch(() => {});
+    };
+    document.addEventListener('fullscreenchange', () => { $('full').textContent = document.fullscreenElement ? '⛶' : '⛶'; $('full').title = document.fullscreenElement ? 'leave full screen' : 'full screen'; });
+  }
 
   // ----------------------------------------------------------------------- loop
   let last = performance.now(), acc = 0, drawn = 0, drawnAt = 0;   // frames drawn, and when the last was
@@ -1693,7 +1716,7 @@
       drawn++;
     }
     if (moved && net.link && ++net.seq % 4 === 0) sendState();   // 15 packets a second
-    hud(); placePlates(); if (net.link || net.guest) netStatus(now);
+    hud(); placePlates(); fitStage(now); if (net.link || net.guest) netStatus(now);
     if (SHOW_FPS) fpsStatus(now, moved);
   }
 

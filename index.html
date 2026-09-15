@@ -4,7 +4,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Protein Fighter</title>
-<link rel="icon" href="data:,">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<!-- Added to a phone's home screen it opens full screen, on its side: the manifest for
+     Android, the apple tags for iOS, which has no full-screen API for a page. -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Protein Fighter">
+<link rel="apple-touch-icon" href="icon.svg">
+<meta name="theme-color" content="#000000">
 <style>
   /* Two themes, switched by data-theme on <html> (game.js). Dark sits on the same black
      as py2Dmol's 3d style, light on the white of its richardson style, so the canvas
@@ -91,8 +100,11 @@
                      60% { transform: translate(4px, -3px); } 70% { transform: translate(-3px, 2px); } 80% { transform: translate(2px, -1px); } 90% { transform: translate(-1px, 1px); } }
   @keyframes pop { 0% { opacity: 1; transform: translateX(-50%) scale(1.5); } 100% { opacity: 0; transform: translate(-50%, -30px) scale(1); } }
 
+  /* Over everything, the pad included, so a button on it (REFOLD, RESUME) cannot be under a
+     touch key; and itself no target, so where it shows nothing a tap reaches what is below. */
   #overlay { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 12px;
-             background: var(--veil); z-index: 4; padding-inline: 16px; }
+             background: var(--veil); z-index: 7; padding-inline: 16px; pointer-events: none; }
+  #overlay > * { pointer-events: auto; }
   #overlay[hidden] { display: none; }
   #overlay.ended { background: transparent; }   /* round over: nothing hides the settling heap */
   #overlay h1 { margin: 0; font-size: clamp(32px, 7vw, 72px); font-style: italic; letter-spacing: -2px; }
@@ -138,12 +150,20 @@
   #theme { position: absolute; z-index: 6; left: var(--side); bottom: var(--foot); width: 26px; height: 26px; padding: 0; border-radius: 50%;
            border: 2px solid var(--cap-edge); background: var(--panel); color: var(--ink); font-size: 14px; line-height: 1; display: grid; place-content: center; }
   #theme:focus:not(:focus-visible) { outline: none; }
+  /* Full screen, bottom right, where the browser allows it (game.js hides it otherwise). */
+  #full { position: absolute; z-index: 6; right: var(--side); bottom: var(--foot); width: 26px; height: 26px; padding: 0; border-radius: 50%;
+          border: 2px solid var(--cap-edge); background: var(--panel); color: var(--ink); font-size: 13px; line-height: 1; display: grid; place-content: center; }
+  #full[hidden] { display: none; }
+  #full:focus:not(:focus-visible) { outline: none; }
   button { font: inherit; cursor: pointer; border: 2px solid var(--ink); background: var(--ink); color: var(--bg); padding: 10px 22px; letter-spacing: 1px; }
   button:disabled { opacity: 0.5; cursor: wait; }
   kbd { border: 1px solid var(--ink); padding: 0 4px; }
 
   /* Controls: P1 on the left of the keyboard, P2 on the right. */
-  .pad { position: absolute; bottom: calc(var(--foot) + 34px); z-index: 5; display: grid; gap: 5px; font-size: 10px; letter-spacing: 0.5px; }
+  /* The pad's box spans the screen on a phone: only its keys are targets, so a tap between
+     them, or on a button of the overlay that the box happens to cover, goes through. */
+  .pad { position: absolute; bottom: calc(var(--foot) + 34px); z-index: 5; display: grid; gap: 5px; font-size: 10px; letter-spacing: 0.5px; pointer-events: none; }
+  .pad .cap { pointer-events: auto; }
   .pad[hidden] { display: none; }
   .pad .who { font-size: 12px; font-style: italic; }
   .pad .row { display: flex; gap: 10px; align-items: end; }
@@ -205,7 +225,7 @@
     .setup { gap: 5px; padding: 8px 12px; margin-top: 6px; }
     .pad { bottom: calc(var(--foot) + 20px); }
     .foot { bottom: calc(var(--foot) + 4px); }
-    #theme { bottom: 2px; width: 22px; height: 22px; font-size: 12px; }
+    #theme, #full { bottom: 2px; width: 22px; height: 22px; font-size: 12px; }
   }
   /* On a touch screen, or any phone-sized one, the game is one player or remote: two on
      one phone is no game. */
@@ -257,6 +277,7 @@
 
   <!-- Dark or light, in the corner: the moon or sun shows the theme it is on. -->
   <button id="theme" tabindex="-1" aria-label="Switch to the light theme" title="light theme">☾</button>
+  <button id="full" tabindex="-1" aria-label="Full screen" title="full screen" hidden>⛶</button>
 
   <div class="pad left">
     <b class="who">P1</b>

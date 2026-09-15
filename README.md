@@ -136,7 +136,10 @@ red at the C-terminus, which shows how each protein is threaded, or by secondary
 structure. Both choices are remembered. Clicking a PAE map lights the two stretches of
 residues that pixel scores on the body. The camera follows the fight, closing in when the fighters are close and
 pulling back as they part, so the game fits a phone as well as a monitor; on a
-touchscreen the on-screen keys are the controls. A phone is drawn lighter to keep
+touchscreen the on-screen keys are the controls. The button in the bottom right corner
+goes full screen, on the phone's side, where the browser allows it (Android, the
+desktops); iOS has no full-screen API for a page, and there Add to Home Screen gives
+the same: the manifest opens the game full screen in landscape. A phone is drawn lighter to keep
 the fight at speed: the cartoon at most thirty times a second while the fight itself
 steps at sixty, at a pixel ratio of 1.5 at most, with three subdivisions per helix
 residue instead of four (`?detail=2` or `4` on the address to try others), and the

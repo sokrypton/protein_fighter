@@ -297,7 +297,7 @@ harmonics and driven by distance walked so the feet don't skate.
   1.4.4, MIT) — the connection and the QR code, vendored so the game does not depend on
   a CDN to connect.
 - `vendor/py2Dmol.embed.min.js` — py2Dmol's embed bundle, byte-identical to the build in
-  `../py2Dmol/py2Dmol/resources/bundles/` at its commit `c426f34`. It carries the change
+  `../py2Dmol/py2Dmol/resources/bundles/` at its commit `bb74ed3`. It carries the change
   that lets `replaceFrame` animate without rebuilding the cartoon mesh (the camera and
   extent are held across same-size frames, and the mesh is updated in place: the
   "station" draw the game switches on), the fix for ribbon loops flickering as they

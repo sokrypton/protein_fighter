@@ -77,6 +77,7 @@ async function solo() {
   // Which leg kicks: either, over many kicks from a whole body; only the sound one once
   // the other is battered. Forced from a clear state each time, as a fight would not allow.
   const kicks = async n => { const seen = new Set(); for (let i = 0; i < n; i++) { seen.add(await t.ev(`(() => { const G = window.proteinFighter, f = G.fighters[0]; Object.assign(f, { stun: 0, blockStun: 0, cooldown: 0, action: 'idle', t: 0, y: 0 }); G.attack(f, 'kick'); return f.limb; })()`)); await sleep(60); } return [...seen].sort().join(''); };
+  await t.ev(`(() => { const f = window.proteinFighter.fighters[0]; f.unfold.fill(0); return 'whole again'; })()`);   // the fight so far may have hurt one leg, which then rightly kicks less
   check(await kicks(14) === 'lr', 'a whole body kicks with either leg over fourteen kicks');
   await t.ev(`(() => { const f = window.proteinFighter.fighters[0]; for (const i of f.form.legSide.l) f.unfold[i] = 0.8; return 'left leg battered'; })()`);
   check(await kicks(8) === 'r', 'with its left leg battered it kicks with the right every time');

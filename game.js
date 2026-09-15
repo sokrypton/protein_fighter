@@ -1802,7 +1802,12 @@
     $('btn-load-custom').hidden = !pendingCustom;
     showPreview(pendingCustom);
   }
-  function closeCustomModal() { $('custom-modal').hidden = true; }
+  // The preview spins only while the card is up. Left spinning behind a closed card it
+  // went on drawing, and py2Dmol's GPU painter keeps one mesh for the page: each of its
+  // draws replaced the arena's mesh, so every arena draw was a full rebuild (1TIM: 1.9
+  // frames a second at CPU x4, against 4.3 without it). py2Dmol now holds a hidden
+  // viewer's draws as well; this stops the spin that asked for them.
+  function closeCustomModal() { $('custom-modal').hidden = true; if (preview) preview.autoRotate = false; }
   // The fighter as it will stand, in a viewer of its own in the card: the built body
   // (limbs grown, legs on the floor) with the model's own pLDDT, in the game's colours,
   // turning slowly until dragged. One viewer, made the first time and reloaded after.
@@ -1819,8 +1824,9 @@
   }
   function showPreview(res) {
     const el = $('custom-preview');
-    if (!res) { el.hidden = true; return; }
+    if (!res) { el.hidden = true; if (preview) preview.autoRotate = false; return; }
     el.hidden = false;
+    if (preview) preview.autoRotate = true;   // spinning again while the card is up
     const text = previewText(res), mode = { rainbow: 'rainbow', ss: 'ss' }[colour] || 'deepmind';
     try {
       if (!preview) {

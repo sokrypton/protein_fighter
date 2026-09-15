@@ -203,20 +203,21 @@
   /* Any protein as P2: a small card over the page. */
   #custom-modal { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: var(--veil); padding: 16px; }
   #custom-modal[hidden] { display: none; }
-  .modal-card { background: var(--panel); color: var(--ink); border: 2px solid var(--ink); border-radius: 12px; padding: 18px 20px; max-width: 440px; width: 100%; display: grid; gap: 12px; text-align: left; }
-  .modal-card h2 { margin: 0; font-size: 14px; letter-spacing: 1px; font-style: italic; }
+  .modal-card { background: var(--panel); color: var(--ink); border: 2px solid var(--ink); border-radius: 12px; padding: 14px 16px; max-width: 480px; width: 100%; display: grid; gap: 10px; text-align: left; }
+  .modal-card.dragover { background: var(--faint); }   /* the whole card takes a dropped file */
   .fetch-row { display: flex; gap: 6px; }
   .fetch-row input { flex: 1; min-width: 0; padding: 8px 10px; font: inherit; font-size: 12px; color: var(--ink); background: var(--bg); border: 2px solid var(--ink); border-radius: 6px; }
   .fetch-row button { padding: 8px 12px; font-size: 11px; border-radius: 6px; white-space: nowrap; }
-  .drop-box { border: 2px dashed var(--ink); border-radius: 6px; padding: 12px; text-align: center; cursor: pointer; font-size: 11px; opacity: 0.85; }
-  .drop-box.dragover { background: var(--faint); border-style: solid; }
-  .drop-box .link { font-size: 11px; }
   .preset-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 10px; letter-spacing: 1px; opacity: 0.9; }
   .preset-row span { opacity: 0.6; }
   .preset-btn { padding: 4px 9px; font-size: 10px; background: transparent; color: var(--ink); border: 1px solid var(--ink); border-radius: 999px; letter-spacing: 1px; }
   .preset-btn:hover { background: var(--faint); }
   #custom-status { font-size: 11px; line-height: 1.5; }
   #custom-status[hidden] { display: none; }
+  /* The fighter as it will stand, to turn by hand before the fight. */
+  #custom-preview { width: 100%; height: min(320px, 45vh); border-radius: 8px; overflow: hidden; touch-action: none; cursor: grab; }
+  #custom-preview[hidden] { display: none; }
+  #custom-preview canvas { width: 100% !important; height: 100% !important; }
   .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
   .modal-actions button { padding: 7px 16px; font-size: 11px; border-radius: 6px; }
   #btn-cancel-custom { background: transparent; color: var(--ink); }
@@ -302,28 +303,27 @@
 
   <!-- Any protein as P2: an AlphaFold DB accession, or a file. game.js reads and rigs it. -->
   <div id="custom-modal" hidden>
-    <div class="modal-card">
-      <h2 id="custom-title">CUSTOM P2</h2>
+    <div class="modal-card" id="drop-zone">
       <div class="fetch-row">
-        <input id="uniprot-input" placeholder="PDB id or UniProt accession: 1UBQ, P69905" spellcheck="false" autocomplete="off" aria-label="PDB id or UniProt accession">
+        <input id="uniprot-input" placeholder="1UBQ, P69905, or drop a file" spellcheck="false" autocomplete="off" aria-label="PDB id or UniProt accession">
         <button type="button" id="btn-fetch-af">FETCH</button>
-      </div>
-      <div class="drop-box" id="drop-zone">
+        <button type="button" id="btn-browse">FILE</button>
         <input type="file" id="file-input" accept=".pdb,.ent,.cif,.mmcif,.mcif" style="display:none">
-        <span>or drop a PDB / mmCIF file here, or <button type="button" class="link" id="btn-browse">browse</button></span>
       </div>
-      <div class="preset-row"><span>TRY</span>
+      <div class="preset-row">
         <button type="button" class="preset-btn" data-preset="gfp">GFP</button>
         <button type="button" class="preset-btn" data-preset="hba">HEMOGLOBIN</button>
         <button type="button" class="preset-btn" data-preset="insulin">INSULIN</button>
         <button type="button" class="preset-btn" data-preset="ubq">UBIQUITIN</button>
       </div>
+      <div id="custom-preview" hidden aria-label="The fighter as it will stand; drag to turn it"></div>
       <div id="custom-status" hidden></div>
       <div class="modal-actions">
         <button type="button" id="btn-cancel-custom">CANCEL</button>
         <button type="button" id="btn-load-custom" disabled>FIGHT</button>
       </div>
     </div>
+  </div>
   </div>
 
   <div class="pad left">

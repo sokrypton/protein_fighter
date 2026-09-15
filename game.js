@@ -1766,20 +1766,55 @@
   const customSpec = [null, null];             // what each player fights as, for a guest joining
   function openCustomModal(player = 1) {
     customFor = player;
-    $('custom-title').textContent = `CUSTOM P${player + 1}`;
+    $('btn-load-custom').textContent = `FIGHT AS P${player + 1}`;
     $('custom-modal').hidden = false;
     $('custom-status').hidden = !pendingCustom;
     $('btn-load-custom').disabled = !pendingCustom;
+    showPreview(pendingCustom);
   }
   function closeCustomModal() { $('custom-modal').hidden = true; }
+  // The fighter as it will stand, in a viewer of its own in the card: the built body
+  // (limbs grown, legs on the floor) with the model's own pLDDT, in the game's colours,
+  // turning slowly until dragged. One viewer, made the first time and reloaded after.
+  let preview = null;
+  function previewText(res) {
+    const breaks = new Set(res.rigData.chain_breaks || []), pl = res.rigData.base_plddt || [];
+    let s = '', num = 0;
+    res.rigData.ca_xyz.forEach((q, i) => {
+      num++;
+      s += `ATOM  ${String(i + 1).padStart(5)}  CA  GLY A${String(num).padStart(4)}    ` + q.map(v => v.toFixed(3).padStart(8)).join('') + `  1.00${(pl[i] ?? 90).toFixed(2).padStart(6)}           C\n`;
+      if (breaks.has(i)) num++;
+    });
+    return s + 'TER\nEND\n';
+  }
+  function showPreview(res) {
+    const el = $('custom-preview');
+    if (!res) { el.hidden = true; return; }
+    el.hidden = false;
+    const text = previewText(res), mode = { rainbow: 'rainbow', ss: 'ss' }[colour] || 'deepmind';
+    try {
+      if (!preview) {
+        // Drawn at one device pixel per CSS pixel and with a coarse cartoon: it is a
+        // small picture that turns, and the pixel ratio is read once when the viewer
+        // is made (parts/viewport.js), so the arena's own is not touched.
+        const style = theme === 'dark' ? '3d' : 'richardson', presetWidth = window.py2dmolCartoon?.LOOK_DEFAULTS?.[style]?.width ?? 3;
+        const dpr = window.canvasDPR; window.canvasDPR = 1;
+        try {
+          preview = window.py2Dmol.show(el, text, { name: 'preview', style, orient: false, controls: false, play: false, select: false, box: false, biounit: false, display: { rotate: true },
+            rendering: { width: presetWidth * RIBBON_WIDTH, ortho: 0.4, detail: 2 } });
+        } finally { if (dpr === undefined) delete window.canvasDPR; else window.canvasDPR = dpr; }
+        preview.setClearColor(true);
+      } else preview.load(text, 'preview', false, { biounit: false });
+      preview.setColor(mode);
+      // Fitted to its arm span it stands small in the box: a little closer, and the
+      // fingertips may leave the frame as it turns. A zoom, so a drag's own zoom stands.
+      preview.viewerState.zoom = 1.35; preview.render?.();
+    } catch (e) { console.warn('preview', e); el.hidden = true; }
+  }
   const esc = t => String(t).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
   // One line: what it is, what it has, what it does.
   function describeCustom(res) {
-    const R = res.roles, has = [];
-    if (R.head) has.push('head');
-    if (R.larm || R.rarm) has.push(res.armsAdded ? 'arms grown' : 'arms');
-    has.push(res.legsAdded ? 'legs grown' : 'legs');
-    return `<strong>${esc(res.name)}</strong> · ${res.residues} residues · ${res.hasPlddt ? `pLDDT ${res.meanPlddt}` : 'no confidence in the file'}${res.pae ? ' · PAE' : ''} · ${has.join(', ')} · special <strong>${esc(res.special.title)}</strong>`;
+    return `<strong>${esc(res.name)}</strong> · ${res.residues} residues · ${res.hasPlddt ? `pLDDT ${res.meanPlddt}` : 'no pLDDT in the file'} · <strong>${esc(res.special.title)}</strong>`;
   }
   function analyseCustom(name, text, extra = {}) {
     const statusEl = $('custom-status');
@@ -1790,10 +1825,12 @@
       pendingCustom = res;
       statusEl.innerHTML = describeCustom(res);
       $('btn-load-custom').disabled = false;
+      showPreview(res);
     } catch (err) {
       statusEl.innerHTML = `<span style="color:#e55">${esc(err.message)}</span>`;
       $('btn-load-custom').disabled = true;
       pendingCustom = null;
+      showPreview(null);
     }
   }
   // The custom fighter as a form, from what buildCustomFighter returned (or what a guest
@@ -1834,7 +1871,6 @@
   };
   $('btn-browse').onclick = () => $('file-input').click();
   const dropZone = $('drop-zone');
-  dropZone.onclick = e => { if (e.target !== $('btn-browse')) $('file-input').click(); };
   dropZone.ondragover = e => { e.preventDefault(); dropZone.classList.add('dragover'); };
   dropZone.ondragleave = () => dropZone.classList.remove('dragover');
   dropZone.ondrop = e => { e.preventDefault(); dropZone.classList.remove('dragover'); readFile(e.dataTransfer.files?.[0]); };
@@ -1937,6 +1973,7 @@
   function frameBody(now) {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
+    if (!$('custom-modal').hidden) return;   // the card is up: the arena holds still behind it, and the preview has the frame to itself
     let moved = false;
     // The freeze on a landed blow: the fighters hold, but the picture goes on being
     // drawn, so the sparks fly and the camera's knock plays through the freeze. Drawn
@@ -2185,7 +2222,7 @@
     resetRound();
     showPicks();
     startViewer(fighters[0].coords, fighters[1].coords);
-    window.proteinFighter = { get fighters() { return fighters; }, get mode() { return mode; }, get phase() { return phase; }, get viewer() { return viewer; }, camera: CAMERA, forms: FORMS, barrelGap, updatePAE, net, view, resetRound, attack, MOVES, SPECIAL };   // for poking at from the console
+    window.proteinFighter = { get fighters() { return fighters; }, get mode() { return mode; }, get phase() { return phase; }, get viewer() { return viewer; }, camera: CAMERA, forms: FORMS, barrelGap, get preview() { return preview; }, updatePAE, net, view, resetRound, attack, MOVES, SPECIAL };   // for poking at from the console
     $('one').disabled = false;
     if (net.guest) joinRemote(window.Net.joinId());
     requestAnimationFrame(frame);

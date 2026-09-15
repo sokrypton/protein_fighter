@@ -211,7 +211,11 @@ parser the viewer uses, and `custom_pdb.js` makes a fighter of the C-alpha trace
 
 The protein is never scaled: a scaled protein has bonds that are no longer 3.8 Å, which
 py2Dmol draws as coil and the physics pulls apart. The grown legs are sized to the
-torso instead. Up to 3000 residues. Over a REMOTE link a custom fighter is sent to
+torso instead. Up to 3000 residues. The card is mostly a preview: the built body as it
+will stand, in a viewer of its own with the model's pLDDT colours, turning slowly until
+dragged, drawn at one pixel per CSS pixel with a coarse cartoon while the arena holds
+still behind the card, so a fighter can be looked over before FIGHT; a line under it
+gives the name, size, pLDDT and special. Over a REMOTE link a custom fighter is sent to
 the other side when it is chosen, or when a newcomer joins; a guest loads its own.
 
 Begun by Ian Anderson (github.com/ianandersonlol/protein_fighter): the parsing, the

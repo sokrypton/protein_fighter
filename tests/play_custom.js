@@ -35,7 +35,17 @@ const check = (ok, what) => { console.log((ok ? '  ok   ' : '  FAIL ') + what); 
   const status = await ev(`document.getElementById('custom-status').innerText`);
   check(/238 residues/.test(status) && /pLDDT 97/.test(status), 'GFP was read from the dropped file: 238 residues, mean pLDDT 97');
   check(/HURRICANE/.test(status), 'a small protein, so its special is the hurricane spin');
-  check(/legs grown/.test(status) && /arms grown/.test(status), 'it has no limb-like protrusions, so legs and arms were grown from its chain');
+  // the preview: the built body in a viewer of its own in the card, turning on its own, and turned by a drag
+  await sleep(800);
+  const pv = JSON.parse(await ev(`JSON.stringify((() => { const el = document.getElementById('custom-preview'), c = el.querySelector('canvas'), p = window.proteinFighter.preview; return { shown: !el.hidden && !!c && c.clientWidth > 100 && c.clientHeight > 100, frames: p && p.objectsData.preview.frames.length, n: p && p.objectsData.preview.frames[0].coords.length }; })())`));
+  check(pv.shown && pv.frames === 1 && pv.n > 238, `the card shows a preview of the built body (${pv.n} residues)`);
+  const r0 = await ev(`JSON.stringify(window.proteinFighter.preview.viewerState.rotation)`); await sleep(1000);
+  check(r0 !== await ev(`JSON.stringify(window.proteinFighter.preview.viewerState.rotation)`), 'the preview turns on its own');
+  const box = JSON.parse(await ev(`JSON.stringify(document.getElementById('custom-preview').getBoundingClientRect())`)), mx = box.x + box.width / 2, my = box.y + box.height / 2;
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: mx, y: my, button: 'left', clickCount: 1 });
+  for (let i = 1; i <= 8; i++) { await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: mx + i * 12, y: my, button: 'left' }); await sleep(30); }
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: mx + 96, y: my, button: 'left', clickCount: 1 }); await sleep(500);
+  check(await ev(`window.proteinFighter.preview.autoRotate === false`), 'a drag turns it by hand and stops the spin');
   await ev(`document.getElementById('btn-load-custom').click(); 'x'`); await sleep(1500);
   const form = JSON.parse(await ev(`JSON.stringify((() => { const G = window.proteinFighter, F = G.forms.custom1; return { n: F.n, special: G.SPECIAL.custom1, name: document.getElementById('name1').textContent }; })())`));
   check(form.n > 238 && form.special === 'spin' && form.name === 'GFP', `P2 is GFP with grown limbs (${form.n} residues), special ${form.special}`);

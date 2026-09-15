@@ -1633,19 +1633,22 @@
     startViewer(fighters[0].coords, fighters[1].coords);
   };
 
-  // The stage resized: py2Dmol resizes its canvas, but the cartoon it holds on the GPU
-  // for in-place updates keeps the old projection, so once the resizing settles the
-  // scene is rebuilt at the new size, as it is for a change of theme. Watched on the
-  // stage itself rather than the window: a phone turning on its side fires resize
-  // before its layout has settled, and a viewer built from that measure stayed small
-  // once the turn finished. The observer reports the size the stage actually ends at,
-  // and fitStage below checks the canvas against it once a second regardless.
+  // The stage resized: py2Dmol's own observer resizes its canvas and redraws the mesh it
+  // already holds, the same frame, as its website does; the game draws once more at once
+  // so the camera is pinned to the new shape and the floor and the cell, which follow
+  // the stage every frame, never show a different size from the proteins. It used to
+  // rebuild the whole viewer 150 ms after the window's resize event, which was the
+  // jump: the background at the new size, the proteins at the old, then a flash. A
+  // phone turning on its side also fires that event before its layout has settled, and
+  // a viewer built from that measure stayed small; the observer reports the size the
+  // stage actually ends at. Once a second the canvas is checked against the stage
+  // regardless, and only if they disagree is the viewer rebuilt.
   let resizeTimer = null;
   function rebuildSoon() {
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => { resizeTimer = null; if (fighters) startViewer(fighters[0].coords, fighters[1].coords); }, 150);
   }
-  new ResizeObserver(rebuildSoon).observe($('stage'));
+  new ResizeObserver(() => { if (fighters && viewer) draw(); }).observe($('stage'));
   let fitAt = 0;
   function fitStage(now) {
     if (now - fitAt < 1000 || resizeTimer) return;

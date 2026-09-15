@@ -182,7 +182,7 @@ The walk in `game.js` is learned from `../dance/humanoid_v8_walk.pdb` (CMU mocap
 retargeted onto this rig): each thigh and shin's pitch over a stride, reduced to three
 harmonics and driven by distance walked so the feet don't skate.
 - `vendor/py2Dmol.embed.min.js` — py2Dmol's embed bundle, byte-identical to the build in
-  `../py2Dmol/py2Dmol/resources/bundles/` at its commit `3e0ddd1`. It carries the change
+  `../py2Dmol/py2Dmol/resources/bundles/` at its commit `4a45940`. It carries the change
   that lets `replaceFrame` animate without rebuilding the cartoon mesh (the camera and
   extent are held across same-size frames, and the mesh is updated in place: the
   "station" draw the game switches on), the fix for ribbon loops flickering as they
@@ -192,6 +192,8 @@ harmonics and driven by distance walked so the feet don't skate.
   of frames whose geometry keeps changing no longer retires the in-place path for good,
   and direct presentation, py2Dmol's default since that commit: its WebGL canvas sits in
   the page under its own canvas instead of being copied into it every frame, which on a
-  phone was three passes over the whole screen per frame
+  phone was three passes over the whole screen per frame, and a bare embed that follows
+  its element's size, so a resize redraws at the new size the same frame instead of the
+  game rebuilding the viewer after it
 
 To update py2Dmol, copy a newer `py2Dmol.embed.min.js` over the vendored one.

@@ -173,9 +173,9 @@ desktops); iOS has no full-screen API for a page, and there Add to Home Screen g
 the same: the manifest opens the game full screen in landscape. A phone is drawn lighter to keep
 the fight at speed: the cartoon at most thirty times a second while the fight itself
 steps at sixty, at a pixel ratio of 1.5 at most, and the PAE maps refreshed a quarter
-as often. Everywhere the cartoon is drawn at py2Dmol's floor of two subdivisions per
-helix residue, a chunkier, retro look that also costs half of the default four
-(`?detail=3` or `4` on the address to compare). Everywhere, a frame that has fallen behind
+as often. Everywhere the cartoon is drawn at three subdivisions per helix residue rather
+than py2Dmol's default four, a slightly chunkier look at three quarters of the cost
+(`?detail=2`, the floor, or `4` on the address to compare). Everywhere, a frame that has fallen behind
 steps at most three times to catch up, a moment of slow motion rather than a spiral.
 `?fps` on the address shows, under the timer, frames and draws a second and the script
 cost of each, to read off a phone.
@@ -197,11 +197,13 @@ parser the viewer uses, and `custom_pdb.js` makes a fighter of the C-alpha trace
   loop is scored for the limb (for a leg the lowest and the nearest to where a hip
   belongs, a little to its own side of the middle and on the fighting plane, so a long
   body's legs stand close together and its kicks pass its own front; for an arm the
-  furthest out at mid height), a terminus with a modest bonus since continuing a free
-  end adds no cut, and the best wins; a terminus is continued as an alpha helix, a
-  loop extended as a pair of strands, out and back (a leg's two strands sit one in
-  front of the other, so the leg reads as a leg from the side, where the fight is
-  watched); at least one limb takes a
+  furthest out at mid height; the second leg a stance's width from the first), a
+  terminus with a bonus since continuing a free end adds no cut (a large one for a leg,
+  so a free end anywhere in the lower half makes a leg; a modest one for an arm), and
+  the best wins; a terminus is continued as an alpha helix, a
+  loop extended as a pair of strands, out and back (a leg's two strands sit left and
+  right across the body, a pair seen side by side from the front, and lines from the
+  side, where the fight is watched); at least one limb takes a
   terminus; a grown limb is built to ideal geometry and carries pLDDT 100; a limb
   grows where its anchor is,
   so a body may come out lopsided, as its shape gives, and each leg is made long enough

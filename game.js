@@ -573,7 +573,7 @@
       // (and the mesh update costs in proportion); ?detail=3 or 4 on the address to compare.
       // gpuDirect (py2Dmol's default, said here so it is seen): its GL canvas sits in the
       // page under its own, rather than being copied into it every frame.
-      rendering: { width: presetWidth * RIBBON_WIDTH, ortho: 0.4, detail: +(new URLSearchParams(location.search).get('detail') || 2), gpuDirect: true },
+      rendering: { width: presetWidth * RIBBON_WIDTH, ortho: 0.4, detail: +(new URLSearchParams(location.search).get("detail") || 3), gpuDirect: true },
     });
     applyColour();
     // No ground of its own: the page's floor sits behind the proteins, not over them.
@@ -1815,7 +1815,7 @@
         const dpr = window.canvasDPR; window.canvasDPR = 1;
         try {
           preview = window.py2Dmol.show(el, text, { name: 'preview', style, orient: false, controls: false, play: false, select: false, box: false, biounit: false, display: { rotate: true },
-            rendering: { width: presetWidth * RIBBON_WIDTH, ortho: 0.4, detail: 2 } });
+            rendering: { width: presetWidth * RIBBON_WIDTH, ortho: 0.4, detail: 3 } });
         } finally { if (dpr === undefined) delete window.canvasDPR; else window.canvasDPR = dpr; }
         preview.setClearColor(true);
       } else preview.load(text, 'preview', false, { biounit: false });

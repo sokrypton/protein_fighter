@@ -1,0 +1,10 @@
+<div id="front" style="width:400px;height:400px;display:inline-block"></div><div id="side" style="width:400px;height:400px;display:inline-block"></div>
+<script src="vendor/py2Dmol.embed.min.js"></script>
+<script>
+fetch('_hba_leg.pdb').then(r => r.text()).then(t => {
+  const a = py2Dmol.show('front', t, { style: 'richardson', orient: false, controls: false, rendering: { detail: 3, gpuDirect: false } });
+  const b = py2Dmol.show('side', t, { style: 'richardson', orient: false, controls: false, rendering: { detail: 3, gpuDirect: false } });
+  b.viewerState.rotation = [[0, 0, 1], [0, 1, 0], [-1, 0, 0]]; b.render('side');
+  window.__done = true;
+});
+</script>

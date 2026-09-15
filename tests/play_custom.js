@@ -9,7 +9,7 @@ const HTTP = 8850 + Math.floor(Math.random() * 100), DEV = 9550 + Math.floor(Mat
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const server = spawn('python3', ['-m', 'http.server', String(HTTP), '--directory', ROOT], { stdio: 'ignore' });
 const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'pf-custom-'));
-const chrome = spawn(CHROME, ['--headless=new', '--no-sandbox', '--mute-audio', `--remote-debugging-port=${DEV}`, `--user-data-dir=${dir}`, '--use-angle=swiftshader', '--enable-unsafe-swiftshader', 'about:blank'], { stdio: 'ignore' });
+const chrome = spawn(CHROME, ['--headless=new', '--no-sandbox', '--mute-audio', '--use-mock-keychain', '--password-store=basic', `--remote-debugging-port=${DEV}`, `--user-data-dir=${dir}`, '--use-angle=swiftshader', '--enable-unsafe-swiftshader', 'about:blank'], { stdio: 'ignore' });
 let failures = 0;
 const check = (ok, what) => { console.log((ok ? '  ok   ' : '  FAIL ') + what); if (!ok) failures++; };
 (async () => {
@@ -29,6 +29,12 @@ const check = (ok, what) => { console.log((ok ? '  ok   ' : '  FAIL ') + what); 
   // the modal, the preset, the analysis
   await ev(`document.querySelector('[data-pick="1:custom1"]').click(); 'x'`); await sleep(200);
   check(await ev(`!document.getElementById('custom-modal').hidden`), 'the custom-protein panel opened');
+  // the id field takes every key, the fight's own included (1, 2 and 3 are P2's strikes; w, a, s, d and f P1's)
+  await ev(`document.getElementById('uniprot-input').focus(); 'focused'`);
+  for (const ch of '1ubq2wasd3f') { await key(ch, 'keyDown'); await key(ch, 'keyUp'); }
+  const typed = await ev(`document.getElementById('uniprot-input').value`);
+  check(typed === '1ubq2wasd3f', `the id field takes digits and the fight's keys as text (${JSON.stringify(typed)})`);
+  await ev(`document.getElementById('uniprot-input').value = ''; document.getElementById('uniprot-input').blur(); 'cleared'`);
   // the file, dropped on the panel as a file is: no network needed here
   await ev(`(async () => { const text = await (await fetch('tests/structures/gfp.pdb')).text(); const dt = new DataTransfer(); dt.items.add(new File([text], 'gfp.pdb')); document.getElementById('drop-zone').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); return 'dropped'; })()`);
   for (let i = 0; i < 60 && (await ev(`document.getElementById('btn-load-custom').hidden`)); i++) await sleep(250);

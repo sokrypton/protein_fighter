@@ -1744,9 +1744,14 @@
     if (r[1] === 'up' && fighters) fighters[i].upReleased = true;   // a tap is a short hop
   }
   const keyName = e => e.key.toLowerCase();
+  // Keys typed into a field are the field's: 1, 2 and 3 are P2's punch, kick and block,
+  // and w, a, s, d and the rest P1's, so a PDB id or an accession lost its digits and
+  // letters to the fight. Escape still closes the custom card from inside its field.
+  const typing = e => { const t = e.target; return !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)); };
   addEventListener('keydown', e => {
     const k = keyName(e);
     if (k === 'escape' && !$('custom-modal').hidden) { e.preventDefault(); closeCustomModal(); return; }
+    if (typing(e)) return;
     if (!route(k) && !['escape', ' ', 'enter'].includes(k)) return;
     e.preventDefault();
     light(k, true);

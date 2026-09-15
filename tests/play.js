@@ -19,7 +19,7 @@ const server = spawn('python3', ['-m', 'http.server', String(HTTP), '--directory
 const browsers = [];
 function launch(port) {
   const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'pf-chrome-'));
-  const b = spawn(CHROME, ['--headless=new', '--no-sandbox', '--mute-audio', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required', 'about:blank'], { stdio: 'ignore' });
+  const b = spawn(CHROME, ['--headless=new', '--no-sandbox', '--mute-audio', '--use-mock-keychain', '--password-store=basic', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required', 'about:blank'], { stdio: 'ignore' });
   browsers.push(b); return b;
 }
 async function tab(port) {

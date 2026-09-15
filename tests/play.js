@@ -106,6 +106,14 @@ async function pair() {
   check(await guest.ev('window.proteinFighter.phase') === 'paused' && await guest.ev('document.getElementById("title").textContent') === 'PAUSED', 'the guest paused when the host paused');
   await guest.ev('document.getElementById("go").click()'); await sleep(600);
   check(await host.ev('window.proteinFighter.phase') === 'playing' && await guest.ev('window.proteinFighter.phase') === 'playing', 'the fight resumed on both when the guest clicked resume');
+  // The round ends: the host's REFOLD button is not on the guest (a click there would do
+  // nothing), which is told the host refolds; the host's REFOLD moves both on.
+  await host.ev(`window.proteinFighter.fighters[1].hp = 0; 'knocked out'`);   // the tick sees it and calls the knockout
+  let over = false; for (let i = 0; i < 100 && !over; i++) { await sleep(1000); over = await guest.ev(`window.proteinFighter.phase === 'over' && !document.getElementById('overlay').hidden`); }   // the knockout's collapse takes a minute of real time headless
+  check(over && await guest.ev(`document.getElementById('go').hidden && document.getElementById('modes').hidden && document.getElementById('msg').textContent === 'the host refolds'`), 'the guest saw the round end with no button and "the host refolds"');
+  await host.ev(`document.getElementById('go').click(); 'refold'`);
+  let next = false; for (let i = 0; i < 20 && !next; i++) { await sleep(500); next = await host.ev(`window.proteinFighter.phase === 'playing'`) && await guest.ev(`window.proteinFighter.phase === 'playing' && document.getElementById('overlay').hidden`); }
+  check(next, "the host's REFOLD started the next round on both sides");
   // The signaling link drops (as it does when a phone sleeps or the server hiccups):
   // the match carries on over the data channel, the status line says so, the peer
   // comes back under the same id, and a newcomer can still use the same link.

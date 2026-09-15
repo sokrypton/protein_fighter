@@ -253,7 +253,9 @@ rest from the chain, and fights with the game's own specials.
 - `tests/play_custom.js` — GFP dropped as a file in headless Chrome: read, rigged, fought, rolled
 - `tests/play.js` — plays the game in headless Chrome: a fight against the CPU with a
   walk, a block, strikes, a heat shock, a throw and a PAE click, checking each registered
-  and nothing threw; `--remote` runs a host and a guest in two browsers over PeerJS, drops the host's
+  and nothing threw; `--remote` runs a host and a guest in two browsers over PeerJS, knocks P2 out and
+  checks the guest sees the round's end with no button of its own (the host refolds, and
+  the guest is told so) and the host's REFOLD moves both on, drops the host's
   signaling socket mid-match and checks the match goes on, the peer comes back under the
   same id and a watcher can still join on the same link; `--remote --relay` allows both
   sides only the relay and checks the route taken is relay to relay, so the worker and

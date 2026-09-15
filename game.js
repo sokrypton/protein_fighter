@@ -1736,13 +1736,8 @@
     b.onpointerdown = e => { e.preventDefault(); light(b.dataset.key, true); press(b.dataset.key); };
     b.onpointerup = b.onpointercancel = b.onpointerleave = () => release(b.dataset.key);
   }
-  $('go').onclick = () => {
-    if (net.guest) {
-      if (phase === 'paused') net.send?.({ t: 'in', a: 'escape' });
-      return;
-    }
-    start();
-  };
+  // A guest's RESUME asks the host, whose fight it is; the state comes back.
+  $('go').onclick = () => { if (net.guest) { if (phase === 'paused') net.send?.({ t: 'in', a: 'escape' }); return; } start(); };
   $('one').onclick = () => start(mode);
   // The protein picks: each is a two-way switch; a change on the title screen swaps the
   // body at once, mid-match it takes effect at the next round.
@@ -2095,9 +2090,13 @@
     }
     $('title').textContent = h.ov.ti; $('title').hidden = !h.ov.ti;
     $('msg').textContent = h.ov.ms; $('msg').hidden = !h.ov.ms;
-    if (h.ov.btn) { $('go').textContent = h.ov.btn; $('go').hidden = false; }
-    else if (h.ov.on) { $('go').hidden = true; }
-    $('modes').hidden = !h.ov.on || !!h.ov.btn;
+    // Between rounds and at a match's end the host refolds or starts again; the guest
+    // has no button for it, only a word that the host will, so nothing invites a click
+    // that does nothing. RESUME it keeps (a request to the host). The menu is the host's alone.
+    const btn = !net.watch && h.ov.btn === 'RESUME' ? 'RESUME' : '';
+    $('go').textContent = btn; $('go').hidden = !btn;
+    if (h.ov.on && phase === 'over' && !h.ov.ms) { $('msg').textContent = 'the host refolds'; $('msg').hidden = false; }
+    $('modes').hidden = true;
     $('overlay').hidden = !h.ov.on; $('overlay').classList.toggle('ended', h.ov.end);
   }
   // A guest's keys act here at once and go to the host: strikes as presses, directions

@@ -54,7 +54,7 @@ for (const [file, want] of FILES) {
   const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
   const res = C.buildCustomFighter(path.basename(file), text);
   results[file] = res;
-  console.log(`${file}: ${res.residues} residues, pLDDT ${res.meanPlddt}${res.hasPlddt ? '' : ' (none in file)'}, ${res.special.special}, roles ${JSON.stringify(res.roles)}${res.legsAdded ? ', helix legs added' : ''}`);
+  console.log(`${file}: ${res.residues} residues, pLDDT ${res.meanPlddt}${res.hasPlddt ? '' : ' (none in file)'}, ${res.special.special}, roles ${JSON.stringify(res.roles)}${res.legsAdded ? ', legs grown' : ''}`);
   check(res.special.special === want.special, `its size picks ${want.special}`);
   if (want.legsAdded !== undefined) check(res.legsAdded === want.legsAdded, want.legsAdded ? 'it has no leg-like protrusions, so helix legs are added' : 'its own legs are found');
   check(res.hasPlddt === want.plddt, want.plddt ? 'its pLDDT is read from the file' : 'a scaffold with no prediction in it reads as folded, its B-factors left alone');

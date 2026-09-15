@@ -1,0 +1,6 @@
+name = "protein-fighter-turn"
+main = "src/index.js"
+compatibility_date = "2024-09-01"
+
+[vars]
+TURN_KEY_ID = "f02778d425cae4ac79ad38054cbe2555"

@@ -1,3 +1,8 @@
 .DS_Store
 .openai/
 __pycache__/
+notes.txt
+.dev.vars
+*.dev.vars
+.wrangler/
+

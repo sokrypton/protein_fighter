@@ -45,18 +45,33 @@ packet fifteen times a second (each fighter's state and the springs of its motio
 the HUD, the overlay, and any hits, callouts and sounds since the last one) that keeps
 the guest in step. The connection is a WebRTC data channel set up through PeerJS's
 public signaling server, direct where it can be and through PeerJS's relays where it
-can't, so both devices need internet even on one Wi-Fi; the page loads PeerJS and a QR
-library from unpkg. A status line under the timer shows the packet rate and the
+can't, so both devices need internet even on one Wi-Fi; PeerJS and the QR library are
+vendored with the page (`vendor/`), so a CDN that is slow or blocked cannot keep the
+game from connecting. A status line under the timer shows the packet rate and the
 link's state on both sides. A TURN server of your own can be given as
 `?turn=turn:host:port&tu=user&tp=password` before pressing REMOTE; the join link carries
 it to the guest. A guest that drops without a word (a dead browser, a lost network, a
 phone that slept) is noticed by the host within six seconds of silence and its seat
 freed, and a guest that stops hearing the host for that long reconnects on its own; the
-same link works throughout. A connection that fails says what the browser saw. Two computers on
-home networks usually connect directly through STUN; a phone on cellular data, or a
-strict corporate NAT, needs a relay, and PeerJS's public relay hands out no relay
-candidates any more (measured September 2026), so those pairs need a TURN server of
-your own through `?turn=`.
+same link works throughout. PeerJS's own link to its signaling server (a WebSocket
+with a heartbeat every five seconds) drops whenever a phone sleeps, a tab goes to the
+background or the server hiccups; that is not the game's link, which is a direct
+channel between the two browsers and carries on, so such a drop is ridden out and the
+peer reconnected under the same id, with a backoff, and the status line says "signal
+lost" meanwhile. A join link of the host's stays good across it. A connection that
+fails says what the browser saw, and a signaling server that hands out no id within
+fifteen seconds is reported rather than waited on. Two computers on home networks
+usually connect directly through STUN (Google's and Cloudflare's, so one blocked
+somewhere still leaves the other); pairs that need a relay — a phone on cellular data,
+a Wi-Fi that isolates its clients (a hotel's, a campus's), or a strict corporate NAT —
+get Cloudflare's TURN relay (UDP, TCP, and TLS over 443): its short-lived credentials
+come from the worker in `worker/` (deployed at protein-fighter-turn.sokrypton.workers.dev;
+`npx wrangler deploy` there after `npx wrangler secret put TURN_KEY_SECRET`), which
+answers only the game's own origins, and are fetched when a connection is about to be
+made and waited on for up to five seconds, the connection going ahead without them
+after that (the status line then says "no relay"). A TURN server of your own can be
+supplied instead through `?turn=`, and `?relay=1` allows only the relay. A watcher's link is the join link
+with `&watch=1` on the end.
 
 | | P1 (left hand) | P2 (right hand) |
 | --- | --- | --- |
@@ -238,7 +253,11 @@ rest from the chain, and fights with the game's own specials.
 - `tests/play_custom.js` — GFP dropped as a file in headless Chrome: read, rigged, fought, rolled
 - `tests/play.js` — plays the game in headless Chrome: a fight against the CPU with a
   walk, a block, strikes, a heat shock, a throw and a PAE click, checking each registered
-  and nothing threw; `--remote` runs a host and a guest in two browsers over PeerJS. A
+  and nothing threw; `--remote` runs a host and a guest in two browsers over PeerJS, drops the host's
+  signaling socket mid-match and checks the match goes on, the peer comes back under the
+  same id and a watcher can still join on the same link; `--remote --relay` allows both
+  sides only the relay and checks the route taken is relay to relay, so the worker and
+  Cloudflare's TURN are what is tested. Chrome runs muted. A
   minute or two, since the browser draws with software OpenGL
 - `cell.js` — the cell behind the fight and the effects over it: membrane, vesicles, a
   mitochondrion, ribosomes, microtubules, shadows, sparks, ligands, footfall ripples,
@@ -247,6 +266,9 @@ rest from the chain, and fights with the game's own specials.
 The walk in `game.js` is learned from `../dance/humanoid_v8_walk.pdb` (CMU mocap 07_01
 retargeted onto this rig): each thigh and shin's pitch over a stride, reduced to three
 harmonics and driven by distance walked so the feet don't skate.
+- `vendor/peerjs.min.js` (PeerJS 1.5.5, MIT) and `vendor/qrcode.js` (qrcode-generator
+  1.4.4, MIT) — the connection and the QR code, vendored so the game does not depend on
+  a CDN to connect.
 - `vendor/py2Dmol.embed.min.js` — py2Dmol's embed bundle, byte-identical to the build in
   `../py2Dmol/py2Dmol/resources/bundles/` at its commit `972186c`. It carries the change
   that lets `replaceFrame` animate without rebuilding the cartoon mesh (the camera and

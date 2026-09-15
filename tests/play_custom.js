@@ -9,7 +9,7 @@ const HTTP = 8850 + Math.floor(Math.random() * 100), DEV = 9550 + Math.floor(Mat
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const server = spawn('python3', ['-m', 'http.server', String(HTTP), '--directory', ROOT], { stdio: 'ignore' });
 const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'pf-custom-'));
-const chrome = spawn(CHROME, ['--headless=new', '--no-sandbox', `--remote-debugging-port=${DEV}`, `--user-data-dir=${dir}`, '--use-angle=swiftshader', '--enable-unsafe-swiftshader', 'about:blank'], { stdio: 'ignore' });
+const chrome = spawn(CHROME, ['--headless=new', '--no-sandbox', '--mute-audio', `--remote-debugging-port=${DEV}`, `--user-data-dir=${dir}`, '--use-angle=swiftshader', '--enable-unsafe-swiftshader', 'about:blank'], { stdio: 'ignore' });
 let failures = 0;
 const check = (ok, what) => { console.log((ok ? '  ok   ' : '  FAIL ') + what); if (!ok) failures++; };
 (async () => {

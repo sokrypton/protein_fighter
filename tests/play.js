@@ -13,13 +13,13 @@ const path = require('path'), fs = require('fs');
 const ROOT = path.join(__dirname, '..');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const HTTP = 8700 + Math.floor(Math.random() * 200), DEV = 9300 + Math.floor(Math.random() * 200);
-const remote = process.argv.includes('--remote');
+const remote = process.argv.includes('--remote'), relay = process.argv.includes('--relay');   // --relay: both sides may use only the TURN relay (?relay=1), so the relay path itself is what is tested
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const server = spawn('python3', ['-m', 'http.server', String(HTTP), '--directory', ROOT], { stdio: 'ignore' });
 const browsers = [];
 function launch(port) {
   const dir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'pf-chrome-'));
-  const b = spawn(CHROME, ['--headless=new', '--no-sandbox', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required', 'about:blank'], { stdio: 'ignore' });
+  const b = spawn(CHROME, ['--headless=new', '--no-sandbox', '--mute-audio', `--remote-debugging-port=${port}`, `--user-data-dir=${dir}`, '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--autoplay-policy=no-user-gesture-required', 'about:blank'], { stdio: 'ignore' });
   browsers.push(b); return b;
 }
 async function tab(port) {
@@ -82,23 +82,47 @@ async function solo() {
 async function pair() {
   launch(DEV); launch(DEV + 1);
   const host = await tab(DEV), guest = await tab(DEV + 1);
-  await host.send('Page.navigate', { url: `http://localhost:${HTTP}/index.html` }); await sleep(4000);
+  await host.send('Page.navigate', { url: `http://localhost:${HTTP}/index.html${relay ? '?relay=1' : ''}` }); await sleep(4000);
   await host.ev(`document.querySelector('[data-players="3"]').click(); document.getElementById('one').click(); 'hosting'`);
   let link = '';
   for (let i = 0; i < 50 && !link.startsWith('http'); i++) { await sleep(500); link = await host.ev(`document.getElementById('joinlink').value`); }
   check(link.startsWith('http'), 'the host got a join link: ' + link);
   check(await host.ev(`!!document.querySelector('#qr img')`), 'and drew it as a QR code');
   if (!link.startsWith('http')) return;
-  await guest.send('Page.navigate', { url: link.replace(/^https?:\/\/[^/]+/, `http://localhost:${HTTP}`) }); await sleep(7000);
-  const hs = JSON.parse(await state(host));
+  await guest.send('Page.navigate', { url: link.replace(/^https?:\/\/[^/]+/, `http://localhost:${HTTP}`) + (relay ? '&relay=1' : '') });
+  let hs = {}; for (let i = 0; i < 30 && hs.phase !== 'playing'; i++) { await sleep(500); hs = JSON.parse(await state(host)); }
   check(hs.mode === 3 && hs.phase === 'playing', 'the fight started on the host when the guest connected');
   const x0 = (await state(host).then(JSON.parse)).p2.x;
   await guest.hold('a', 2000); await guest.tap('f'); await sleep(800);   // a long hold: headless draws a few frames a second, and the fight steps at most three times a frame
   const x1 = (await state(host).then(JSON.parse)).p2.x, gs = JSON.parse(await state(guest));
   check(Math.abs(x1 - x0) > 15, `the guest's keys moved P2 on the host (${x0} → ${x1})`);
   check(Math.abs(gs.p2.x - x1) < 40, `the guest sees P2 near where the host has it (${gs.p2.x} vs ${x1})`);
+  // The route taken, from the guest's own connection: a relay at both ends when only the relay was allowed.
+  const route = await guest.ev(`(async () => { const pc = Object.values(window.Net.peer().connections).flat()[0].peerConnection; const st = await pc.getStats(); let pair = null; st.forEach(r => { if (r.type === 'candidate-pair' && r.state === 'succeeded' && (r.nominated || r.selected)) pair = r; }); if (!pair) return 'no pair'; const l = st.get(pair.localCandidateId), r = st.get(pair.remoteCandidateId); return (l ? l.candidateType : '?') + ' → ' + (r ? r.candidateType : '?'); })()`);
+  check(relay ? route === 'relay → relay' : route !== 'no pair', `the guest's route to the host is ${route}${relay ? ' (relay only was asked for)' : ''}`);
+  check(await host.ev(`window.Net.ice().iceServers.some(s => s.username && s.credential)`) && await guest.ev(`window.Net.ice().iceServers.some(s => s.username && s.credential)`), 'both sides hold TURN credentials from the worker');
+  // Pause sync: host pauses with escape, guest reflects pause; guest resumes with go button
+  await host.ev('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))'); await sleep(500);
+  check(await guest.ev('window.proteinFighter.phase') === 'paused' && await guest.ev('document.getElementById("title").textContent') === 'PAUSED', 'the guest paused when the host paused');
+  await guest.ev('document.getElementById("go").click()'); await sleep(600);
+  check(await host.ev('window.proteinFighter.phase') === 'playing' && await guest.ev('window.proteinFighter.phase') === 'playing', 'the fight resumed on both when the guest clicked resume');
+  // The signaling link drops (as it does when a phone sleeps or the server hiccups):
+  // the match carries on over the data channel, the status line says so, the peer
+  // comes back under the same id, and a newcomer can still use the same link.
+  const idBefore = await host.ev(`window.Net.peer().id`);
+  await host.ev(`window.Net.peer().socket._socket.close(); 'dropped'`); await sleep(1500);
+  const p2a = (await state(host).then(JSON.parse)).p2.x;
+  await guest.hold('d', 2000); await sleep(800);
+  const p2b = (await state(host).then(JSON.parse)).p2.x, during = JSON.parse(await state(host));
+  check(during.phase === 'playing' && Math.abs(p2b - p2a) >= 8, `the host's signaling socket closed and the match went on (P2 ${p2a} → ${p2b})`);
+  check(/signal lost/.test(await host.ev(`document.getElementById('netstat').textContent`)) || await host.ev(`window.Net.peer().open`), 'the status line said the signal was lost, or it was already back');
+  let back = false; for (let i = 0; i < 40 && !back; i++) { await sleep(500); back = await host.ev(`window.Net.peer().open && window.Net.peer().id === ${JSON.stringify(idBefore)}`); }
+  check(back, 'the host reconnected to the signaling server under the same id');
+  const watcher = await tab(DEV + 1);
+  await watcher.send('Page.navigate', { url: link.replace(/^https?:\/\/[^/]+/, `http://localhost:${HTTP}`) + '&watch=1' }); await sleep(7000);
+  check(await host.ev(`window.proteinFighter.net.watchers === 1`), 'a watcher joined on the same link afterwards');
   check(host.errors.length === 0 && guest.errors.length === 0, 'no exceptions on either side' + ([...host.errors, ...guest.errors].length ? ': ' + [...host.errors, ...guest.errors].slice(0, 3).join(' | ') : ''));
-  host.ws.close(); guest.ws.close();
+  host.ws.close(); guest.ws.close(); watcher.ws.close();
 }
 
 (async () => {

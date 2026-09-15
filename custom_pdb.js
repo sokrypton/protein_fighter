@@ -113,8 +113,22 @@
   function findLimbs(coords, breaks, sec) {
     const N = coords.length, c = [0, 0, 0];
     for (const p of coords) { c[0] += p[0] / N; c[1] += p[1] / N; c[2] += p[2] / N; }
-    const radial = coords.map(p => dist3(p, c)), near = neighbourLists(coords, 10);
+    const radial = coords.map(p => dist3(p, c)), near = neighbourLists(coords, 10), near14 = neighbourLists(coords, 14);
     const sorted = radial.slice().sort((a, b) => a - b), coreR = sorted[Math.floor(0.7 * N)];   // most of the body lies within this
+    // 🔴 A LIMB STANDS CLEAR OF THE BODY. Sticking out past the core's radius was not
+    // enough: a long bundle (11EU) has surface helices at its ends further from the
+    // centre than seven tenths of it, and they passed as arms, lying flush with the
+    // body, nothing to see and nothing to swing. The outer half of a limb has none of
+    // the body alongside it: body residues (within the core's radius and a bit) within
+    // 14 Å of it, per residue - 0 to 0.3 on a real protrusion, 4 to 5 on those helices.
+    const bodyR = coreR * 1.15;
+    const clear = (a, b) => {
+      const rs = []; for (let i = a; i <= b; i++) rs.push(radial[i]);
+      rs.sort((x, y) => x - y); const mid = rs[rs.length >> 1];
+      let n = 0, k = 0;
+      for (let i = a; i <= b; i++) { if (radial[i] < mid) continue; k++; for (const j of near14[i]) if ((j < a - 2 || j > b + 2) && radial[j] <= bodyR) n++; }
+      return k ? n / k : 0;
+    };
     const minL = 10, maxL = Math.min(60, Math.floor(N / 3));
     if (maxL < minL) return { limbs: [], centre: c, coreR };
     // A stretch is a limb by how few contacts it has with the REST of the chain: a helix
@@ -170,6 +184,7 @@
         const structured = !sec || ss / L >= 0.5;
         const straight = travel <= 2.6 * reach && narrow && structured;
         if (!straight && outFrac < 0.5) continue;
+        if (straight && clear(a, b) > 1) continue;   // an arm or a leg stands clear of the body; a head is a lobe and may sit against it
         cands.push({ a, b, tip, straight, score: stick + 2 * exposure + 0.05 * L });
       }
     }
@@ -342,10 +357,15 @@
     // was put: a terminus taken for the first leg on the far side of the middle (its
     // bonus outweighs the distance) would otherwise have the second leg's loop chosen
     // beside it, the two legs grown through each other.
-    let legX = null;
+    let legX = null, armX = null;   // where the first of each pair went: the second belongs a width away
+    // An arm is anchored at the FRONT of the body (z, the rig's forward), at mid height,
+    // to its own side: it is grown out sideways and the pose folds it forward from its
+    // shoulder, so a shoulder at the back of a deep body (FUS is 110 Å deep) left the
+    // fist short of the body's own front, and every punch short of the opponent.
+    const zFront = Math.max(...coords.filter((_, i) => !taken.has(i)).map(p => p[2]));
     const score = (i, want, side) => {
-      const p = coords[i], x = p[0] * side;
-      if (want !== 'leg') return x - Math.abs(p[1] - (torsoBottom + 0.6 * h));
+      const p = coords[i];
+      if (want !== 'leg') { const sx = armX == null ? side * 1.5 * hipX : armX - Math.sign(armX || side) * 3 * hipX; return (p[2] - zFront) - 0.8 * Math.abs(p[1] - (torsoBottom + 0.6 * h)) - 0.6 * Math.abs(p[0] - sx); }
       const hx = legX == null ? side * hipX : legX - Math.sign(legX || side) * 2 * hipX;
       return -1.5 * (p[1] - torsoBottom) - 0.7 * Math.hypot(p[0] - hx, p[2]);
     };
@@ -359,7 +379,7 @@
         if (sec && sec[i] !== 'C' && sec[i + 1] !== 'C') continue;
         const sc = score(i, want, side); if (sc > bs) { bs = sc; best = { i, terminus: false }; }
       }
-      if (best) { used.add(best.i); if (!best.terminus) used.add(best.i + 1); if (want === 'leg' && legX == null) legX = coords[best.i][0]; }
+      if (best) { used.add(best.i); if (!best.terminus) used.add(best.i + 1); if (want === 'leg' && legX == null) legX = coords[best.i][0]; if (want === 'arm' && armX == null) armX = coords[best.i][0]; }
       slots.push({ want, side: side < 0 ? 'l' : 'r', score: bs, at: best });
     }
     if (!slots.some(s => s.at && s.at.terminus)) {
@@ -369,7 +389,10 @@
         const cost = s.score - score(i, s.want, s.side === 'l' ? -1 : 1);   // what the slot gives up
         if (cost < loss) { loss = cost; move = { slot: s, i }; }
       }
-      if (move) move.slot.at = { i: move.i, terminus: true };
+      // ...unless every terminus is somewhere no limb belongs (FUS: one at the top of the
+      // head, one deep in the back), where the slot moved would be a limb that cannot
+      // reach: an arm rooted mid-body, its fist short of the body's own front.
+      if (move && loss <= 30) move.slot.at = { i: move.i, terminus: true };
     }
     return slots;
   }

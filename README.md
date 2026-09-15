@@ -195,22 +195,27 @@ parser the viewer uses, and `custom_pdb.js` makes a fighter of the C-alpha trace
 
 - stood on its longest axis, whichever way up gives the better body;
 - its protruding stretches found (exposed, reaching out beyond the body, running out
-  and back at most once, built of helix or strand) and given roles by which way they
-  point: up a head, down legs, across arms; the rest is the torso;
+  and back at most once, built of helix or strand, and, for an arm or a leg, standing
+  clear of the body along its outer half: a long bundle's surface helices reached past
+  its core's radius and passed as arms while lying flush with it, nothing to see and
+  nothing to swing) and given roles by which way they point: up a head, down legs,
+  across arms; the rest is the torso;
 - what it lacks grown out of its own chain (legs as a pair, one found alone given up
   and both grown; an arm found alone kept, the other grown to it): every free terminus and every surface
   loop is scored for the limb (for a leg the lowest and the nearest to where a hip
   belongs, a little to its own side of the middle and on the fighting plane, so a long
   body's legs stand close together and its kicks pass its own front; for an arm the
-  furthest out at mid height; the second leg a stance's width from the first, and
-  which is left and which is right is where they are), a
+  nearest the body's front at mid height, since the pose folds an arm forward from
+  its shoulder and a shoulder at the back of a deep body left the fist short of the
+  body's own front; the second of each pair a width from the first, and which is
+  left and which is right is where they are), a
   terminus with a bonus since continuing a free end adds no cut (a large one for a leg,
   so a free end anywhere in the lower half makes a leg; a modest one for an arm), and
-  the best wins; a terminus is continued as an alpha helix, a
+  the best wins; at least one limb takes a terminus unless every terminus is somewhere
+  no limb belongs; a terminus is continued as an alpha helix, a
   loop extended as a pair of strands, out and back (a leg's two strands sit left and
   right across the body, a pair seen side by side from the front, and lines from the
-  side, where the fight is watched); at least one limb takes a
-  terminus; a grown limb is built to ideal geometry and carries pLDDT 100; a limb
+  side, where the fight is watched); a grown limb is built to ideal geometry and carries pLDDT 100; a limb
   grows where its anchor is,
   so a body may come out lopsided, as its shape gives, and each leg is made long enough
   from its own anchor to reach the floor; the two sides need not match;

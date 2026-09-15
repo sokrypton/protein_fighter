@@ -66,9 +66,8 @@ somewhere still leaves the other); pairs that need a relay — a phone on cellul
 a Wi-Fi that isolates its clients (a hotel's, a campus's), or a strict corporate NAT —
 get Cloudflare's TURN relay (UDP, TCP, and TLS over 443): its short-lived credentials
 come from the worker in `worker/` (deployed at protein-fighter-turn.sokrypton.workers.dev;
-`npx wrangler deploy` there after `npx wrangler secret put TURN_KEY_SECRET`), which
-answers only the game's own origins, and are fetched when a connection is about to be
-made and waited on for up to five seconds, the connection going ahead without them
+`npx wrangler deploy` there after `npx wrangler secret put TURN_KEY_SECRET`), and are
+fetched when a connection is about to be made and waited on for up to five seconds, the connection going ahead without them
 after that (the status line then says "no relay"). A TURN server of your own can be
 supplied instead through `?turn=`, and `?relay=1` allows only the relay. A watcher's link is the join link
 with `&watch=1` on the end.

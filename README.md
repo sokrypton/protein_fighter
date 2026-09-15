@@ -197,7 +197,8 @@ parser the viewer uses, and `custom_pdb.js` makes a fighter of the C-alpha trace
   loop is scored for the limb (for a leg the lowest and the nearest to where a hip
   belongs, a little to its own side of the middle and on the fighting plane, so a long
   body's legs stand close together and its kicks pass its own front; for an arm the
-  furthest out at mid height; the second leg a stance's width from the first), a
+  furthest out at mid height; the second leg a stance's width from the first, and
+  which is left and which is right is where they are), a
   terminus with a bonus since continuing a free end adds no cut (a large one for a leg,
   so a free end anywhere in the lower half makes a leg; a modest one for an arm), and
   the best wins; a terminus is continued as an alpha helix, a

@@ -383,7 +383,16 @@
     // the body's half-width, for where the hips and shoulders sit
     const torso = coords.filter((_, i) => !taken.has(i)), halfWidth = Math.max(8, ...torso.map(p => Math.abs(p[0])));
     const hipX = clamp(halfWidth * 0.5, 6, 14);
-    for (const { want, side, at: a } of planAnchors(coords, sec, breaks, taken, torsoBottom, torsoTop, need, hipX)) {
+    // Which is left and which is right is where the anchors are, not which slot found
+    // them: the first leg may have been a terminus on the far side of the middle, and a
+    // left leg grown from the right side tilts left through the right leg, the two
+    // crossed (hemoglobin, ubiquitin). The lower x is the left of each pair.
+    const plan = planAnchors(coords, sec, breaks, taken, torsoBottom, torsoTop, need, hipX);
+    for (const want of need) {
+      const pair = plan.filter(s => s.want === want && s.at);
+      if (pair.length === 2 && coords[pair[0].at.i][0] > coords[pair[1].at.i][0]) [pair[0].side, pair[1].side] = [pair[1].side, pair[0].side];
+    }
+    for (const { want, side, at: a } of plan) {
       if (!a) continue;
       {
         const sg = side === 'l' ? -1 : 1;

@@ -1770,7 +1770,7 @@
     customFor = player;
     $('custom-modal').hidden = false;
     $('custom-status').hidden = !pendingCustom;
-    $('custom-actions').hidden = !pendingCustom;
+    $('btn-load-custom').hidden = !pendingCustom;
     showPreview(pendingCustom);
   }
   function closeCustomModal() { $('custom-modal').hidden = true; }
@@ -1807,9 +1807,16 @@
         preview.setClearColor(true);
       } else preview.load(text, 'preview', false, { biounit: false });
       preview.setColor(mode);
-      // Fitted to its arm span it stands small in the box: a little closer, and the
-      // fingertips may leave the frame as it turns. A zoom, so a drag's own zoom stands.
-      preview.viewerState.zoom = 1.35; preview.render?.();
+      // Framed on the body's box, not py2Dmol's mean-and-radius (which put a long-legged
+      // body's feet under the edge): centred on the box, wide enough for the furthest
+      // point from the axis it turns about, so nothing leaves the frame as it turns.
+      const P = res.rigData.ca_xyz; let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+      for (const q of P) for (let k = 0; k < 3; k++) { lo[k] = Math.min(lo[k], q[k]); hi[k] = Math.max(hi[k], q[k]); }
+      const c = [0, 1, 2].map(k => (lo[k] + hi[k]) / 2); let rx = 0;
+      for (const q of P) rx = Math.max(rx, Math.hypot(q[0] - c[0], q[2] - c[2]));
+      preview.viewerState.center = { x: c[0], y: c[1], z: c[2] };
+      window.py2dmolSetViewSpan?.(preview.viewerState, { x: rx + 4, y: (hi[1] - lo[1]) / 2 + 4 });
+      preview.viewerState.zoom = 1; preview.render?.();
     } catch (e) { console.warn('preview', e); el.hidden = true; }
   }
   const esc = t => String(t).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
@@ -1825,11 +1832,11 @@
       res.title = extra.title || '';
       pendingCustom = res;
       statusEl.innerHTML = describeCustom(res);
-      $('custom-actions').hidden = false;
+      $('btn-load-custom').hidden = false;
       showPreview(res);
     } catch (err) {
       statusEl.innerHTML = `<span style="color:#e55">${esc(err.message)}</span>`;
-      $('custom-actions').hidden = true;
+      $('btn-load-custom').hidden = true;
       pendingCustom = null;
       showPreview(null);
     }
@@ -1872,10 +1879,22 @@
     reader.readAsText(file);
   };
   $('btn-browse').onclick = () => $('file-input').click();
+  // A file dropped anywhere on the page is a custom fighter (as on py2Dmol's own page):
+  // the card opens, for P2, or for the player it was last open for, and reads it. The
+  // page says so while a file is over it.
   const dropZone = $('drop-zone');
-  dropZone.ondragover = e => { e.preventDefault(); dropZone.classList.add('dragover'); };
-  dropZone.ondragleave = () => dropZone.classList.remove('dragover');
-  dropZone.ondrop = e => { e.preventDefault(); dropZone.classList.remove('dragover'); readFile(e.dataTransfer.files?.[0]); };
+  let dragDepth = 0;
+  const dragging = on => { document.body.classList.toggle('dragover', on); dropZone.classList.toggle('dragover', on); if (!on) dragDepth = 0; };
+  addEventListener('dragenter', e => { if (e.dataTransfer?.types?.includes('Files')) { dragDepth++; dragging(true); } });
+  addEventListener('dragleave', () => { if (--dragDepth <= 0) dragging(false); });
+  addEventListener('dragover', e => { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault(); });
+  addEventListener('drop', e => {
+    const file = e.dataTransfer?.files?.[0];
+    if (!file) return;
+    e.preventDefault(); dragging(false);
+    if ($('custom-modal').hidden) openCustomModal(net.guest ? 1 : customFor);
+    readFile(file);
+  });
   $('file-input').onchange = e => { readFile(e.target.files?.[0]); e.target.value = ''; };
   // Fight it: installed here, and, over a link, on the other side too.
   $('btn-load-custom').onclick = () => {

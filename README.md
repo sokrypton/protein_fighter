@@ -214,8 +214,9 @@ The protein is never scaled: a scaled protein has bonds that are no longer 3.8 �
 py2Dmol draws as coil and the physics pulls apart. The grown legs are sized to the
 torso instead. Up to 3000 residues. The card is mostly a preview: the built body as it
 will stand, in a viewer of its own with the model's pLDDT colours, turning slowly until
-dragged, drawn at one pixel per CSS pixel with a coarse cartoon while the arena holds
-still behind the card, so a fighter can be looked over; a line under it gives the
+dragged (a file dropped anywhere on the page opens the card and reads it), drawn at one pixel per CSS pixel with a coarse cartoon while the arena holds
+still behind the card (py2Dmol keeps one GL canvas per page, the arena's on-page
+layer, so the arena's last frame is kept on its own canvas while the preview draws), so a fighter can be looked over; a line under it gives the
 name, size, pLDDT and special, and a blue FIGHT appears once a structure is in (a click
 on the veil, or Escape, leaves the card). Over a REMOTE link a custom fighter is sent to
 the other side when it is chosen, or when a newcomer joins; a guest loads its own.
@@ -277,7 +278,7 @@ harmonics and driven by distance walked so the feet don't skate.
   1.4.4, MIT) — the connection and the QR code, vendored so the game does not depend on
   a CDN to connect.
 - `vendor/py2Dmol.embed.min.js` — py2Dmol's embed bundle, byte-identical to the build in
-  `../py2Dmol/py2Dmol/resources/bundles/` at its commit `972186c`. It carries the change
+  `../py2Dmol/py2Dmol/resources/bundles/` at its commit `c426f34`. It carries the change
   that lets `replaceFrame` animate without rebuilding the cartoon mesh (the camera and
   extent are held across same-size frames, and the mesh is updated in place: the
   "station" draw the game switches on), the fix for ribbon loops flickering as they

@@ -31,10 +31,18 @@ const check = (ok, what) => { console.log((ok ? '  ok   ' : '  FAIL ') + what); 
   check(await ev(`!document.getElementById('custom-modal').hidden`), 'the custom-protein panel opened');
   // the file, dropped on the panel as a file is: no network needed here
   await ev(`(async () => { const text = await (await fetch('tests/structures/gfp.pdb')).text(); const dt = new DataTransfer(); dt.items.add(new File([text], 'gfp.pdb')); document.getElementById('drop-zone').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); return 'dropped'; })()`);
-  for (let i = 0; i < 60 && (await ev(`document.getElementById('custom-actions').hidden`)); i++) await sleep(250);
+  for (let i = 0; i < 60 && (await ev(`document.getElementById('btn-load-custom').hidden`)); i++) await sleep(250);
   const status = await ev(`document.getElementById('custom-status').innerText`);
   check(/238 residues/.test(status) && /pLDDT 97/.test(status), 'GFP was read from the dropped file: 238 residues, mean pLDDT 97');
   check(/HURRICANE/.test(status), 'a small protein, so its special is the hurricane spin');
+  // a file dropped anywhere on the page opens the card and reads it: the same GFP, dropped on the arena with the card closed
+  await ev(`document.getElementById('custom-modal').hidden = true; 'closed'`);
+  await ev(`(async () => { const text = await (await fetch('tests/structures/gfp.pdb')).text(); const dt = new DataTransfer(); dt.items.add(new File([text], 'gfp2.pdb')); document.getElementById('stage').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); return 'dropped anywhere'; })()`);
+  await sleep(1500);
+  check(await ev(`!document.getElementById('custom-modal').hidden && /gfp2/.test(document.getElementById('custom-status').innerText)`), 'a file dropped on the arena opened the card and was read');
+  // the arena behind the card keeps its own picture: py2Dmol's one GL canvas is the arena's layer, and the preview drawing into it must not show there
+  const arenaOk = await ev(`(() => { const st = document.getElementById('stage'), cs = st.querySelectorAll('canvas'); const layer = [...cs].find(c => c.hasAttribute('data-py2dmol-layer')); return { canvases: cs.length, layerHidden: layer ? getComputedStyle(layer).display === 'none' : null }; })()`);
+  check(arenaOk && arenaOk.layerHidden === true, `the arena's GL layer is hidden while the preview draws (${JSON.stringify(arenaOk)})`);
   // the preview: the built body in a viewer of its own in the card, turning on its own, and turned by a drag
   await sleep(800);
   const pv = JSON.parse(await ev(`JSON.stringify((() => { const el = document.getElementById('custom-preview'), c = el.querySelector('canvas'), p = window.proteinFighter.preview; return { shown: !el.hidden && !!c && c.clientWidth > 100 && c.clientHeight > 100, frames: p && p.objectsData.preview.frames.length, n: p && p.objectsData.preview.frames[0].coords.length }; })())`));
@@ -48,7 +56,7 @@ const check = (ok, what) => { console.log((ok ? '  ok   ' : '  FAIL ') + what); 
   check(await ev(`window.proteinFighter.preview.autoRotate === false`), 'a drag turns it by hand and stops the spin');
   await ev(`document.getElementById('btn-load-custom').click(); 'x'`); await sleep(1500);
   const form = JSON.parse(await ev(`JSON.stringify((() => { const G = window.proteinFighter, F = G.forms.custom1; return { n: F.n, special: G.SPECIAL.custom1, name: document.getElementById('name1').textContent }; })())`));
-  check(form.n > 238 && form.special === 'spin' && form.name === 'GFP', `P2 is GFP with grown limbs (${form.n} residues), special ${form.special}`);
+  check(form.n > 238 && form.special === 'spin' && /^GFP/.test(form.name), `P2 is ${form.name} with grown limbs (${form.n} residues), special ${form.special}`);
   // the fight: P1 walks in and strikes; P2 (the CPU, hard) fights back
   await ev(`document.querySelector('[data-level="hard"]').click(); document.getElementById('one').click(); 'go'`); await sleep(1000);
   const hp0 = JSON.parse(await ev(`JSON.stringify(window.proteinFighter.fighters.map(f => f.hp))`));

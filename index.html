@@ -203,8 +203,10 @@
   /* Any protein as P2: a small card over the page. */
   #custom-modal { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; background: var(--veil); padding: 16px; }
   #custom-modal[hidden] { display: none; }
-  .modal-card { background: var(--panel); color: var(--ink); border: 2px solid var(--ink); border-radius: 12px; padding: 14px 16px; max-width: 480px; width: 100%; display: grid; gap: 10px; text-align: left; }
+  .modal-card { background: var(--panel); color: var(--ink); border: 2px solid var(--ink); border-radius: 12px; padding: 14px 16px; max-width: 560px; width: 100%; display: grid; gap: 10px; text-align: left; }
   .modal-card.dragover { background: var(--faint); }   /* the whole card takes a dropped file */
+  /* A file over the page, anywhere: the page says it will take it. */
+  body.dragover::after { content: 'drop the structure anywhere'; position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; background: var(--veil); color: var(--ink); font-size: 16px; letter-spacing: 3px; border: 4px dashed var(--ink); box-sizing: border-box; pointer-events: none; }
   .fetch-row { display: flex; gap: 6px; }
   .fetch-row input { flex: 1; min-width: 0; padding: 8px 10px; font: inherit; font-size: 12px; color: var(--ink); background: var(--bg); border: 2px solid var(--ink); border-radius: 6px; }
   .fetch-row button { padding: 8px 12px; font-size: 11px; border-radius: 6px; white-space: nowrap; }
@@ -215,15 +217,18 @@
   #custom-status { font-size: 11px; line-height: 1.5; }
   #custom-status[hidden] { display: none; }
   /* The fighter as it will stand, to turn by hand before the fight. */
-  #custom-preview { width: 100%; height: min(320px, 45vh); border-radius: 8px; overflow: hidden; touch-action: none; cursor: grab; }
+  #custom-preview { width: 100%; height: min(520px, 62vh); border-radius: 8px; overflow: hidden; touch-action: none; cursor: grab; }
   #custom-preview[hidden] { display: none; }
   #custom-preview canvas { width: 100% !important; height: 100% !important; }
-  /* Once a structure is in: FIGHT, in the AlphaFold blue, and nothing else (a click on
-     the veil or Escape leaves the card). */
-  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
-  .modal-actions[hidden] { display: none; }
-  #btn-load-custom { padding: 9px 22px; font-size: 12px; border-radius: 6px; background: #0d57d3; color: #fff; border-color: #0d57d3; letter-spacing: 2px; }
+  /* Once a structure is in: FIGHT, in the AlphaFold blue, on the same row, and nothing
+     else (a click on the veil or Escape leaves the card). */
+  #btn-load-custom { background: #0d57d3; color: #fff; border-color: #0d57d3; letter-spacing: 2px; }
   #btn-load-custom:hover { background: #1a66e6; }
+  #btn-load-custom[hidden] { display: none; }
+  /* The line about the fighter sits on the preview, not under it. */
+  .preview-box { position: relative; }
+  .preview-box[hidden] { display: none; }
+  #custom-status { position: absolute; left: 8px; bottom: 6px; pointer-events: none; }
   @media (max-width: 760px), (max-height: 520px) { .footnote { display: none; } }
   /* A phone upright: the fighters fill the width, so the menu takes the room over their
      heads, under the health bars, and their names go under their feet. */
@@ -311,6 +316,7 @@
         <input id="uniprot-input" placeholder="1UBQ, P69905, or drop a file" spellcheck="false" autocomplete="off" aria-label="PDB id or UniProt accession">
         <button type="button" id="btn-fetch-af">FETCH</button>
         <button type="button" id="btn-browse">UPLOAD</button>
+        <button type="button" id="btn-load-custom" hidden>FIGHT</button>
         <input type="file" id="file-input" accept=".pdb,.ent,.cif,.mmcif,.mcif" style="display:none">
       </div>
       <div class="preset-row">
@@ -319,10 +325,9 @@
         <button type="button" class="preset-btn" data-preset="insulin">INSULIN</button>
         <button type="button" class="preset-btn" data-preset="ubq">UBIQUITIN</button>
       </div>
-      <div id="custom-preview" hidden aria-label="The fighter as it will stand; drag to turn it"></div>
-      <div id="custom-status" hidden></div>
-      <div class="modal-actions" id="custom-actions" hidden>
-        <button type="button" id="btn-load-custom">FIGHT</button>
+      <div class="preview-box">
+        <div id="custom-preview" hidden aria-label="The fighter as it will stand; drag to turn it"></div>
+        <div id="custom-status" hidden></div>
       </div>
     </div>
   </div>

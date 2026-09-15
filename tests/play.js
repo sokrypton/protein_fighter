@@ -68,6 +68,13 @@ async function solo() {
   await sleep(1500);
   await t.ev(`(() => { const c = document.getElementById('pae0'), r = c.getBoundingClientRect(); c.onclick({ clientX: r.left + r.width * 0.3, clientY: r.top + r.height * 0.6 }); return 'clicked'; })()`);
   await sleep(300);
+  // The special comes of a punch and a kick within a moment of each other. Headless draws
+  // a few frames a second and the fight steps at most three times a frame, so one attempt
+  // lands the pair in the same step as often as not: tried again until it comes out.
+  for (let i = 0; i < 6 && !(await t.ev(`window.__c.shock`)); i++) {
+    await t.ev(`(() => { const f = window.proteinFighter.fighters[0]; Object.assign(f, { stun: 0, blockStun: 0, cooldown: 0, action: 'idle', t: 0 }); return 1; })()`);
+    await t.tap('f'); await sleep(80); await t.tap('g'); await sleep(500);
+  }
   const c = JSON.parse(await t.ev(`JSON.stringify(window.__c)`)), s = JSON.parse(await state(t));
   const picked = await t.ev(`(window.proteinFighter.viewer.residueSelection || window.proteinFighter.viewer.renderer?.residueSelection || new Set()).size`);
   console.log('  counts', JSON.stringify(c), '| state', JSON.stringify(s));

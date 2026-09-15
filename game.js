@@ -762,6 +762,7 @@
     const apart = phase !== 'ready' ? 80 : SIDE_PLATES.matches ? 112 : 100;   // warming up behind the menu they stand wider, clear of the settings between them; wider still on a phone on its side
     fighters = [newFighter(-apart, 1, FORMS[pick[0]]), newFighter(apart, -1, FORMS[pick[1]])];
     drawHalf = PHONE || fighters[0].form.n + fighters[1].form.n > BIG;
+    paeSlow = fighters[0].form.n + fighters[1].form.n > BIG;
     CAMERA.x = 0;
     clearFinisher();
     netEvent('reset', pick.slice());
@@ -2056,7 +2057,7 @@
   // are big: py2Dmol's mesh update is the frame's cost and grows with the residues, so
   // two fighters past a thousand residues between them draw at half rate on a desktop too.
   const BIG = 1000;
-  let drawHalf = PHONE;
+  let drawHalf = PHONE, paeSlow = false;
   const DT = 1 / 60;
   let tripped = 0;   // exceptions a step has thrown, reported once
   function frame(now) {
@@ -2102,7 +2103,9 @@
       // Live PAE maps: every residue against every residue, so the two maps take turns,
       // one a draw (one every other draw on a phone), not through the hit freeze, where
       // nothing moved, and not while the maps are off the screen.
-      const every = drawHalf ? 2 : 1;
+      // ...and a quarter as often again past a thousand residues, where a map costs most
+      // and its two fighters take turns: each map redrawn about five times a second.
+      const every = paeSlow ? 4 : drawHalf ? 2 : 1;
       if (hitstop <= 0 && drawn % every === 0 && !SIDE_PLATES.matches) { const i = (drawn / every) & 1, f = fighters[i]; updatePAE(f); drawPAE(f, i); }
       drawn++;
     }

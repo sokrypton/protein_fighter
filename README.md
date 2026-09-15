@@ -177,12 +177,24 @@ desktops); iOS has no full-screen API for a page, and there Add to Home Screen g
 the same: the manifest opens the game full screen in landscape. A phone is drawn lighter to keep
 the fight at speed: the cartoon at most thirty times a second while the fight itself
 steps at sixty, at a pixel ratio of 1.5 at most, and the PAE maps refreshed a quarter
-as often. Everywhere the cartoon is drawn at three subdivisions per helix residue rather
+as often - a quarter as often again past a thousand residues, where each map is at its
+most expensive and there are two of them. A map samples a couple of rows per pixel of
+its own width rather than a fixed four hundred, which is what it was oversampling. Everywhere the cartoon is drawn at three subdivisions per helix residue rather
 than py2Dmol's default four, a slightly chunkier look at three quarters of the cost
 (`?detail=2`, the floor, or `4` on the address to compare). Everywhere, a frame that has fallen behind
 steps at most three times to catch up, a moment of slow motion rather than a spiral.
 `?fps` on the address shows, under the timer, frames and draws a second and the script
 cost of each, to read off a phone.
+
+A viewer whose canvas cannot be seen draws nothing (py2Dmol): the preview in the custom
+panel used to spin on behind the closed panel, and since the GPU painter keeps one mesh
+for the page, each of its draws made the arena rebuild its own - every frame of the
+fight. On a fight against 1TIM that was 1.9 frames a second against 4.3 for the built-in
+pair, at a quarter of this machine's speed; it is 4.0 now. The rest of a frame's script
+is the cartoon (py2Dmol captures the scene afresh each draw) and the fight's own step:
+the step is 3.0 ms of it on that fight, having been 4.6 before the rig kept its pose
+arrays, the bond relaxation was cut to the bonds by a loose residue and each dent's
+strength was worked out once rather than once per residue.
 
 ## Custom proteins
 

@@ -104,7 +104,9 @@ async function pair() {
   check(Math.abs(x1 - x0) > 8, `the guest's keys moved P2 on the host (${x0} → ${x1})`);   // a few steps: headless draws a few frames a second
   check(Math.abs(gs.p2.x - x1) < 40, `the guest sees P2 near where the host has it (${gs.p2.x} vs ${x1})`);
   // The route taken, from the guest's own connection: a relay at both ends when only the relay was allowed.
-  const route = await guest.ev(`(async () => { const pc = Object.values(window.Net.peer().connections).flat()[0].peerConnection; const st = await pc.getStats(); let pair = null; st.forEach(r => { if (r.type === 'candidate-pair' && r.state === 'succeeded' && (r.nominated || r.selected)) pair = r; }); if (!pair) return 'no pair'; const l = st.get(pair.localCandidateId), r = st.get(pair.remoteCandidateId); return (l ? l.candidateType : '?') + ' → ' + (r ? r.candidateType : '?'); })()`);
+  // ...read from its stats, which name the pair in use a moment after the channel opens: asked a few times
+  let route = 'no pair';
+  for (let i = 0; i < 10 && route === 'no pair'; i++) { route = await guest.ev(`(async () => { const pc = Object.values(window.Net.peer().connections).flat()[0].peerConnection; const st = await pc.getStats(); let pair = null; st.forEach(r => { if (r.type === 'candidate-pair' && r.state === 'succeeded' && (r.nominated || r.selected)) pair = r; }); if (!pair) return 'no pair'; const l = st.get(pair.localCandidateId), r = st.get(pair.remoteCandidateId); return (l ? l.candidateType : '?') + ' → ' + (r ? r.candidateType : '?'); })()`); if (route === 'no pair') await sleep(500); }
   check(relay ? route === 'relay → relay' : route !== 'no pair', `the guest's route to the host is ${route}${relay ? ' (relay only was asked for)' : ''}`);
   check(await host.ev(`window.Net.ice().iceServers.some(s => s.username && s.credential)`) && await guest.ev(`window.Net.ice().iceServers.some(s => s.username && s.credential)`), 'both sides hold TURN credentials from the worker');
   // Pause sync: host pauses with escape, guest reflects pause; guest resumes with go button

@@ -631,7 +631,14 @@
   // its near edge in front. Where those lines fall on screen follows the camera, so the
   // feet stand on the floor at any size of screen.
   // The feet stand between 20 Å behind the pelvis and 25 Å in front of it.
-  const FLOOR_FAR_Z = -30, FLOOR_NEAR_Z = 28, GRID = 20;   // Å between the floor's lines
+  // ...and wider for a body whose feet stand deeper than the built-in ones (a custom
+  // body's legs grow where its loops are): set at each round from the feet.
+  let FLOOR_FAR_Z = -30, FLOOR_NEAR_Z = 28; const GRID = 20;   // Å between the floor's lines
+  function fitFloor() {
+    let lo = -30, hi = 28;
+    for (const f of fighters) for (const k of ['lleg_foot', 'rleg_foot']) for (const i of f.form.rig.domains[k] || []) { const z = f.form.rig.bind[i][2]; lo = Math.min(lo, z - 12); hi = Math.max(hi, z + 12); }
+    FLOOR_FAR_Z = lo; FLOOR_NEAR_Z = hi;
+  }
   // py2Dmol's projection, so the page can draw to the same camera: a world point turned
   // into the camera's frame, then, with its partial perspective, scaled by focal / (focal
   // - depth). Returns [screen x, screen y, that scale factor] in stage pixels.
@@ -711,6 +718,12 @@
     time = 99; koTimer = 0; ai = 1.5; hitstop = 0;
     for (const h of held) h.clear();
     for (const f of fighters) { f.coords = body(f, clock); f.top = Math.max(...f.coords.map(q => q[1])); }   // the head's top, for the plate over it
+    // A body taller than the built-in ones would stand off the top of the screen: the
+    // view opens out to take the taller of the two, its head allowed to be clipped a
+    // little, the floor kept in the frame.
+    const tallest = Math.max(...fighters.map(f => f.top));
+    CAMERA.halfH = Math.max(100, 0.5 * (tallest + 30)); CAMERA.centerY = CAMERA.halfH - 30;
+    fitFloor();
     // The PAE reference is each fighter as it stands at the bell: healthy, in its stance.
     // Which pairs the lDDT scores (neighbours in the stance), and room for the pose's local
     // positions: both are measured against the undamaged pose each update, not the stance.

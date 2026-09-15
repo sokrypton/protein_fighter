@@ -194,7 +194,9 @@ parser the viewer uses, and `custom_pdb.js` makes a fighter of the C-alpha trace
   and back at most once, built of helix or strand) and given roles by which way they
   point: up a head, down legs, across arms; the rest is the torso;
 - what it lacks grown out of its own chain: every free terminus and every surface
-  loop is scored for the limb (for a leg the lowest on that side, for an arm the
+  loop is scored for the limb (for a leg the lowest and the nearest to where a hip
+  belongs, a little to its own side of the middle and on the fighting plane, so a long
+  body's legs stand close together and its kicks pass its own front; for an arm the
   furthest out at mid height), a terminus with a modest bonus since continuing a free
   end adds no cut, and the best wins; a terminus is continued as an alpha helix, a
   loop extended as a pair of strands, out and back; at least one limb takes a
@@ -212,7 +214,9 @@ parser the viewer uses, and `custom_pdb.js` makes a fighter of the C-alpha trace
 
 The protein is never scaled: a scaled protein has bonds that are no longer 3.8 Å, which
 py2Dmol draws as coil and the physics pulls apart. The grown legs are sized to the
-torso instead. Up to 3000 residues. The card is mostly a preview: the built body as it
+torso instead. Up to 3000 residues; a body taller than the built-in ones opens the
+view out (its head may be clipped a little) and one whose feet stand deep widens the
+floor. The card is mostly a preview: the built body as it
 will stand, in a viewer of its own with the model's pLDDT colours, turning slowly until
 dragged (a file dropped anywhere on the page opens the card and reads it), drawn at one pixel per CSS pixel with a coarse cartoon while the arena holds
 still behind the card (py2Dmol keeps one GL canvas per page, the arena's on-page

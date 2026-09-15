@@ -282,14 +282,22 @@
     // the knee halfway down the upright part, the ankle where the foot turns forward
     return { pts, limbFrom: lead.length, kneeAt: lead.length + (nUp >> 1), footAt: lead.length + nUp };
   }
-  function hairpinLimb(anchorA, anchorB, rootA, dir, len, footLen) {
+  // `sideWanted`, if given, is the way the two strands sit apart: a leg's run one in
+  // front of the other (along z, the rig's forward, which the game turns to face the
+  // opponent), so the sheet's face is to the side and the leg reads as a leg from the
+  // side, where the fight is watched; sat across the body they stood as a sheet seen
+  // edge-on, a line. An arm's sit the way its two anchors do.
+  function hairpinLimb(anchorA, anchorB, rootA, dir, len, footLen, sideWanted) {
     const d = scale3(dir, 1 / norm3(dir));
     // the strands run 4.8 A apart, across the way the anchors sit
-    const across = sub3(anchorB, anchorA);
+    const across = sideWanted || sub3(anchorB, anchorA);
     // ...at right angles to the limb: where the anchors sit along it (an arm growing
     // sideways from two residues one above the other), any perpendicular will do
     let side = sub3(across, scale3(d, dot3(across, d))); const sl = norm3(side);
-    if (sl > 1.5) side = scale3(side, 1 / sl);
+    if (sideWanted && sl > 1e-6) side = scale3(side, 4.8 / sl);   // a wanted way is a direction, not a distance: made long enough to be taken
+    else if (sideWanted) side = [0, 0, 0];
+    const sl2 = norm3(side);
+    if (sl2 > 1.5) side = scale3(side, 1 / sl2);
     else { const ref = Math.abs(d[2]) < 0.9 ? [0, 0, 1] : [0, 1, 0]; side = [d[1] * ref[2] - d[2] * ref[1], d[2] * ref[0] - d[0] * ref[2], d[0] * ref[1] - d[1] * ref[0]]; side = scale3(side, 1 / norm3(side)); }
     const pleat = [d[1] * side[2] - d[2] * side[1], d[2] * side[0] - d[0] * side[2], d[0] * side[1] - d[1] * side[0]];
     const n = Math.max(3, Math.round(len / 3.3)), nf = footLen > 0 ? Math.max(2, Math.round(footLen / 3.3)) : 0;
@@ -306,8 +314,9 @@
   }
 
   // Where to grow from. Every free terminus and every surface-loop residue is scored
-  // for the limb (for a leg the lowest on that side, for an arm the furthest out at
-  // mid height), a terminus with a modest bonus, since continuing a free end as a
+  // for the limb (for a leg the lowest and the nearest to where a hip belongs, a little
+  // to its own side of the body's middle and on the fighting plane; for an arm the
+  // furthest out at mid height), a terminus with a modest bonus, since continuing a free end as a
   // helix adds no cut and cannot tear; the best wins. At least one limb takes a
   // terminus: if none did, the limb whose slot a terminus suits best is moved onto it.
   // A limb grows where its anchor is, not carried anywhere: a body may come out
@@ -315,12 +324,17 @@
   // enough from its own anchor to reach the same floor. Nothing already in a limb,
   // nothing at a break.
   const TERMINUS_BONUS = 6;   // in the score's units, angstroms of placement
-  function planAnchors(coords, sec, breaks, taken, torsoBottom, torsoTop, need) {
+  function planAnchors(coords, sec, breaks, taken, torsoBottom, torsoTop, need, hipX) {
     const N = coords.length, h = torsoTop - torsoBottom;
     const ok = i => !taken.has(i) && !breaks.has(i) && !(i > 0 && breaks.has(i - 1));
-    const score = (i, want, side) => {   // how well residue i suits a limb on `side`: legs low, arms out at mid height
+    // 🔴 LEGS CLOSE TOGETHER. A leg scored by how far out on its own side its anchor sat
+    // put a long body's hips at the two ends of it, 80 Å apart along the fighting
+    // axis, so a kick from the rear hip never passed the body's own front and landed
+    // nothing. A leg is scored by height and by distance from where its hip belongs:
+    // hipX to its own side of the middle, on the fighting plane (z 0).
+    const score = (i, want, side) => {
       const p = coords[i], x = p[0] * side;
-      return want === 'leg' ? (x > 0 ? x : 4 * x) - 1.5 * (p[1] - torsoBottom) : x - Math.abs(p[1] - (torsoBottom + 0.6 * h));
+      return want === 'leg' ? -1.5 * (p[1] - torsoBottom) - 0.7 * Math.hypot(p[0] - side * hipX, p[2]) : x - Math.abs(p[1] - (torsoBottom + 0.6 * h));
     };
     const used = new Set(), slots = [];
     for (const want of need) for (const side of [-1, 1]) {
@@ -356,7 +370,7 @@
     // the body's half-width, for where the hips and shoulders sit
     const torso = coords.filter((_, i) => !taken.has(i)), halfWidth = Math.max(8, ...torso.map(p => Math.abs(p[0])));
     const hipX = clamp(halfWidth * 0.5, 6, 14);
-    for (const { want, side, at: a } of planAnchors(coords, sec, breaks, taken, torsoBottom, torsoTop, need)) {
+    for (const { want, side, at: a } of planAnchors(coords, sec, breaks, taken, torsoBottom, torsoTop, need, hipX)) {
       if (!a) continue;
       {
         const sg = side === 'l' ? -1 : 1;
@@ -368,7 +382,7 @@
         const floorY = torsoBottom + 2 - legLen, limbLen = want === 'leg' ? Math.max(30, root[1] - floorY) : len;
         let built, where;
         if (a.terminus) { built = helixLimb(anchor, root, dir, limbLen, foot); where = a.i === 0 ? { before: 0, reverse: true } : { before: coords.length }; }
-        else { built = hairpinLimb(anchor, coords[a.i + 1], root, dir, limbLen, foot); where = { before: a.i + 1 }; }
+        else { built = hairpinLimb(anchor, coords[a.i + 1], root, dir, limbLen, foot, want === 'leg' ? [0, 0, 1] : null); where = { before: a.i + 1 }; }
         let { pts, limbFrom, limbTo = pts.length - 1, kneeAt, footAt } = built;
         if (where.reverse) { pts.reverse(); const n = pts.length; [limbFrom, limbTo] = [n - 1 - limbTo, n - 1 - limbFrom]; kneeAt = n - 1 - kneeAt; footAt = n - 1 - footAt; }   // grown off the N-terminus, the chain runs tip first
         inserts.push({ ...where, pts, limbFrom, limbTo, kneeAt, footAt, role: want === 'leg' ? side + 'leg' : side + 'arm', terminus: a.terminus, anchor: a.i });

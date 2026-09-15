@@ -35,13 +35,17 @@
       this.bind = data.ca_xyz.map(p => p.slice());
       this.pivots = data.pivots;
       this.domains = data.domain_indices;
+      this.chainBreaks = new Set(data.chain_breaks || []);
       // How much of each arm bends at the elbow, as a fraction of its length each side of
       // the joint. A helix arm bends in a few residues (a wider blend distorts its turns);
       // a hairpin sheet keeps more of its pairing when the bend is spread over a quarter.
       this.armHinge = data.arm_hinge ?? 0.07;
       // Which domain owns each residue; null for the hinge residues between domains.
       this.owner = new Array(this.n).fill(null);
-      for (const name in this.domains) for (const i of this.domains[name]) this.owner[i] = name;
+      for (const name in this.domains) {
+        if (!this.domains[name]) continue;
+        for (const i of this.domains[name]) this.owner[i] = name;
+      }
       // Tethers: a limb that hangs off the body by a hinge loop cannot be posed further
       // from its anchor than the loop reaches, so the whole limb, and each part down the
       // chain from a joint, is pulled back toward the residue the loop leaves from. Read
@@ -49,18 +53,16 @@
       const chains = [['lleg_thigh', 'lleg_shin', 'lleg_foot'], ['rleg_thigh', 'rleg_shin', 'rleg_foot'], ['head'], ['larm'], ['rarm']];
       this.tethers = [];
       for (const chain of chains) for (let k = 0; k < chain.length; k++) {
-        const group = chain.slice(k).filter(name => this.domains[name]);
+        const group = chain.slice(k).filter(name => this.domains[name] && this.domains[name].length);
         if (!group.length) continue;
         const inside = i => this.owner[i] === null || group.includes(this.owner[i]);
         const idx = group.flatMap(name => this.domains[name]);
+        if (!idx.length) continue;
         const lo = Math.min(...idx), hi = Math.max(...idx), pulls = [];
-        let a = lo - 1; while (a >= 0 && inside(a)) a--;
-        let b = hi + 1; while (b < this.n && inside(b)) b++;
-        // Across a loop the limb may sit anywhere within the loop's reach; bonded straight
-        // to its anchor (a joint with no loop residue) it is held at exactly a bond's length,
-        // so the bond bends but never stretches or compresses either side.
-        if (a >= 0) pulls.push([lo, a, lo - a >= 2 ? (lo - a) * CA_STEP * 0.98 : CA_STEP, lo - a < 2]);
-        if (b < this.n) pulls.push([hi, b, b - hi >= 2 ? (b - hi) * CA_STEP * 0.98 : CA_STEP, b - hi < 2]);
+        let a = lo - 1; while (a >= 0 && inside(a) && !this.chainBreaks.has(a)) a--;
+        let b = hi + 1; while (b < this.n && inside(b) && !this.chainBreaks.has(b - 1)) b++;
+        if (a >= 0 && !this.chainBreaks.has(a)) pulls.push([lo, a, lo - a >= 2 ? (lo - a) * CA_STEP * 0.98 : CA_STEP, lo - a < 2]);
+        if (b < this.n && !this.chainBreaks.has(b - 1)) pulls.push([hi, b, b - hi >= 2 ? (b - hi) * CA_STEP * 0.98 : CA_STEP, b - hi < 2]);
         if (pulls.length) this.tethers.push({ domains: group, pulls });
       }
     }
@@ -168,8 +170,9 @@
       const arms = [
         ['larm', P.larm_shoulder, P.larm_hand, pLsh, Rlup, Rlfa],
         ['rarm', P.rarm_shoulder, P.rarm_hand, pRsh, Rrup, Rrfa],
-      ];
-      this._armParam ??= { larm: this.armParam('larm'), rarm: this.armParam('rarm') };
+      ].filter(([name]) => D[name] && D[name].length);
+      this._armParam ??= {};
+      for (const [name] of arms) this._armParam[name] ??= this.armParam(name);
       for (const [name, sb, hb, ps, Ru, Rf] of arms) {
         const bent = this._bendArm(D[name].map(i => this.bind[i]), this._armParam[name], sb, hb, ps, Ru, Rf, this.elbowAt(name));
         D[name].forEach((i, k) => { ca[i] = bent[k]; owner[i] = name; });
@@ -177,9 +180,9 @@
       // Unowned hinge residues: blend the neighbouring domains' transforms.
       for (let i = 0; i < this.n; i++) {
         if (owner[i] !== null) continue;
-        let a = i - 1; while (a >= 0 && owner[a] === null) a--;
-        let b = i + 1; while (b < this.n && owner[b] === null) b++;
-        if (a < 0 || b >= this.n) continue;
+        let a = i - 1; while (a >= 0 && owner[a] === null && !this.chainBreaks.has(a)) a--;
+        let b = i + 1; while (b < this.n && owner[b] === null && !this.chainBreaks.has(b - 1)) b++;
+        if (a < 0 || b >= this.n || this.chainBreaks.has(a)) continue;
         const f = (i - a) / (b - a);
         const [Ra, ta] = affine[owner[a]] || affine.torso, [Rb, tb] = affine[owner[b]] || affine.torso;
         ca[i] = add3(scale3(add3(matVec3(Ra, this.bind[i]), ta), 1 - f), scale3(add3(matVec3(Rb, this.bind[i]), tb), f));
@@ -205,6 +208,7 @@
           shiftDomains(domains, s);
         }
         for (let i = 0; i < this.n - 1; i++) {
+          if (this.chainBreaks.has(i)) continue;
           if (owner[i] !== null && owner[i] === owner[i + 1]) continue;
           const d = sub3(ca[i + 1], ca[i]), l = norm3(d);
           if (l < 1e-9) continue;

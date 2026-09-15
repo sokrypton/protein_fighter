@@ -199,6 +199,51 @@
     body:has(#p2pad[hidden]) .pad.left .row { flex-direction: row; justify-content: space-between; align-items: end; width: 100%; }
     body:has(#p2pad[hidden]) .pad.left .who { justify-self: start; }
   }
+  /* Custom PDB Modal */
+  #custom-modal {
+    position: fixed; inset: 0; z-index: 100;
+    display: grid; place-items: center;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(6px);
+    padding: 16px;
+  }
+  #custom-modal[hidden] { display: none; }
+  .modal-card {
+    background: var(--panel); color: var(--ink);
+    border: 2px solid var(--ink); border-radius: 8px;
+    padding: 24px; max-width: 520px; width: 100%;
+    box-shadow: 0 12px 36px rgba(0,0,0,0.5);
+    display: grid; gap: 14px; text-align: left;
+  }
+  .modal-card h2 { margin: 0; font-size: 18px; letter-spacing: 1px; font-style: italic; }
+  .modal-card .sub { margin: 0; font-size: 11px; opacity: 0.75; line-height: 1.4; }
+  .preset-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 10px; }
+  .preset-row span { font-weight: bold; opacity: 0.7; }
+  .preset-btn { padding: 4px 8px; font-size: 10px; background: transparent; color: var(--ink); border: 1px solid var(--ink); border-radius: 4px; }
+  .preset-btn:hover { background: var(--faint); }
+  .custom-split { display: grid; gap: 12px; margin-top: 4px; }
+  .fetch-box { display: grid; gap: 4px; }
+  .fetch-box label { font-size: 10px; font-weight: bold; letter-spacing: 0.5px; }
+  .fetch-row { display: flex; gap: 6px; }
+  .fetch-row input { flex: 1; min-width: 0; padding: 7px 10px; font: inherit; font-size: 12px; color: var(--ink); background: var(--bg); border: 2px solid var(--ink); border-radius: 4px; }
+  .fetch-row button { padding: 7px 14px; font-size: 11px; border-radius: 4px; }
+  .fetch-box small { font-size: 9px; opacity: 0.6; }
+  .drop-box {
+    border: 2px dashed var(--ink); border-radius: 6px;
+    padding: 16px; text-align: center; cursor: pointer;
+    background: var(--bg); transition: background 0.15s;
+    display: grid; gap: 4px;
+  }
+  .drop-box.dragover { background: var(--faint); border-style: solid; }
+  .drop-box b { font-size: 12px; letter-spacing: 0.5px; }
+  .drop-box span { font-size: 10px; opacity: 0.75; }
+  #custom-status {
+    padding: 8px 12px; border-radius: 4px; font-size: 11px; line-height: 1.4;
+    background: var(--faint); border-left: 3px solid var(--ink);
+  }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
+  .modal-actions button { padding: 7px 16px; font-size: 11px; border-radius: 4px; }
+  #btn-cancel-custom { background: transparent; color: var(--ink); }
   @media (max-width: 760px), (max-height: 520px) { .footnote { display: none; } }
   /* A phone upright: the fighters fill the width, so the menu takes the room over their
      heads, under the health bars, and their names go under their feet. */
@@ -268,7 +313,7 @@
          proteins; the fighter below swaps as you choose. game.js places them. -->
     <div class="picks">
       <div class="pick" data-player="0" role="group" aria-label="P1 protein"><span class="pill"><button data-pick="0:barrel" tabindex="-1" class="on">BARREL</button><button data-pick="0:helix" tabindex="-1">BUNDLE</button></span></div>
-      <div class="pick" data-player="1" role="group" aria-label="P2 protein"><span class="pill"><button data-pick="1:barrel" tabindex="-1">BARREL</button><button data-pick="1:helix" tabindex="-1" class="on">BUNDLE</button></span></div>
+      <div class="pick" data-player="1" role="group" aria-label="P2 protein"><span class="pill"><button data-pick="1:barrel" tabindex="-1">BARREL</button><button data-pick="1:helix" tabindex="-1" class="on">BUNDLE</button><button data-pick="1:custom" id="pick-p2-custom" tabindex="-1">CUSTOM</button></span><button type="button" id="btn-open-custom" class="link" style="margin-left:4px; font-size:10px; text-decoration:underline;">LOAD PDB / CIF</button></div>
     </div>
     <div id="qr" hidden></div>
     <div id="joinbox" hidden><input id="joinlink" readonly spellcheck="false" aria-label="Join link"><button id="copylink" type="button">COPY</button></div>
@@ -278,6 +323,47 @@
   <!-- Dark or light, in the corner: the moon or sun shows the theme it is on. -->
   <button id="theme" tabindex="-1" aria-label="Switch to the light theme" title="light theme">☾</button>
   <button id="full" tabindex="-1" aria-label="Full screen" title="full screen" hidden>⛶</button>
+
+  <!-- Custom PDB / CIF Chooser Modal -->
+  <div id="custom-modal" hidden>
+    <div class="modal-card">
+      <h2>CHOOSE P2 OPPONENT PROTEIN</h2>
+      <p class="sub">Pick a protein to fight against. Drop any .pdb or .cif (AlphaFold 3, Boltz-1, Chai-1) file, or fetch from AlphaFold DB! Real pLDDT confidence sets its starting health and physical floppiness.</p>
+
+      <div class="preset-row">
+        <span>PRESETS:</span>
+        <button type="button" class="preset-btn" data-preset="gfp">GFP (97 pLDDT)</button>
+        <button type="button" class="preset-btn" data-preset="hba">HEMOGLOBIN (98 pLDDT)</button>
+        <button type="button" class="preset-btn" data-preset="fus">FUS (54 pLDDT - FLOPPY!)</button>
+      </div>
+
+      <div class="custom-split">
+        <div class="fetch-box">
+          <label for="uniprot-input">ALPHAFOLD DB FETCH</label>
+          <div class="fetch-row">
+            <input id="uniprot-input" placeholder="UniProt ID (e.g. P00533, P69905)" spellcheck="false" autocomplete="off">
+            <button type="button" id="btn-fetch-af">FETCH</button>
+          </div>
+          <small>Direct network fetch from AlphaFold DB with real per-residue pLDDT</small>
+        </div>
+
+        <div class="drop-box" id="drop-zone">
+          <input type="file" id="file-input" accept=".pdb,.cif,.mcif" style="display:none">
+          <div id="drop-prompt">
+            <b>DROP .PDB OR .CIF FILE HERE</b><br>
+            <span>Supports AF3, Boltz, Chai-1, and crystal structures<br>or <button type="button" class="link" id="btn-browse" style="display:inline; font-size:10px; text-decoration:underline;">browse computer</button></span>
+          </div>
+        </div>
+      </div>
+
+      <div id="custom-status" hidden></div>
+
+      <div class="modal-actions">
+        <button type="button" id="btn-cancel-custom">CANCEL</button>
+        <button type="button" id="btn-load-custom" disabled>FIGHT THIS PROTEIN</button>
+      </div>
+    </div>
+  </div>
 
   <div class="pad left">
     <b class="who">P1</b>
@@ -330,6 +416,7 @@
 <script src="rig_data_helix.js"></script>
 <script src="rig.js"></script>
 <script src="motion.js"></script>
+<script src="custom_pdb.js"></script>
 <script src="game.js"></script>
 </body>
 </html>

@@ -170,11 +170,21 @@
       };
       if (P.neck) affine.head = pin(Rhd, P.neck, fromRoot(P.neck));
 
-      const owner = new Array(this.n).fill(null);
+      // ...AND ONE OWNER ARRAY, REUSED: it is the same every pose (the domains do not
+      // change), and _relax lists its movable bonds against it once rather than each call.
+      // Each residue is placed in place, R · bind + t, without the two arrays a call.
+      const owner = this._owner || (this._owner = new Array(this.n));
+      owner.fill(null);
       for (const name in affine) {
         if (!D[name]) continue;
-        const [R, t] = affine[name];
-        for (const i of D[name]) { ca[i] = add3(matVec3(R, this.bind[i]), t); owner[i] = name; }
+        const [R, t] = affine[name], B = this.bind;
+        for (const i of D[name]) {
+          const b = B[i], c = ca[i];
+          c[0] = R[0] * b[0] + R[1] * b[1] + R[2] * b[2] + t[0];
+          c[1] = R[3] * b[0] + R[4] * b[1] + R[5] * b[2] + t[1];
+          c[2] = R[6] * b[0] + R[7] * b[1] + R[8] * b[2] + t[2];
+          owner[i] = name;
+        }
       }
       const arms = [
         ['larm', P.larm_shoulder, P.larm_hand, pLsh, Rlup, Rlfa],
@@ -194,7 +204,10 @@
         if (a < 0 || b >= this.n || this.chainBreaks.has(a)) continue;
         const f = (i - a) / (b - a);
         const [Ra, ta] = affine[owner[a]] || affine.torso, [Rb, tb] = affine[owner[b]] || affine.torso;
-        ca[i] = add3(scale3(add3(matVec3(Ra, this.bind[i]), ta), 1 - f), scale3(add3(matVec3(Rb, this.bind[i]), tb), f));
+        const q = this.bind[i], c = ca[i], g = 1 - f;
+        c[0] = g * (Ra[0] * q[0] + Ra[1] * q[1] + Ra[2] * q[2] + ta[0]) + f * (Rb[0] * q[0] + Rb[1] * q[1] + Rb[2] * q[2] + tb[0]);
+        c[1] = g * (Ra[3] * q[0] + Ra[4] * q[1] + Ra[5] * q[2] + ta[1]) + f * (Rb[3] * q[0] + Rb[4] * q[1] + Rb[5] * q[2] + tb[1]);
+        c[2] = g * (Ra[6] * q[0] + Ra[7] * q[1] + Ra[8] * q[2] + ta[2]) + f * (Rb[6] * q[0] + Rb[7] * q[1] + Rb[8] * q[2] + tb[2]);
       }
       this._relax(ca, owner, 40);
       return ca;
@@ -210,23 +223,37 @@
         if (norm3(s) <= 1e-4) return;
         for (const name of names) for (const i of D[name]) ca[i] = add3(ca[i], s);
       };
+      // 🔴 THE BONDS THE LOOP CAN MOVE, LISTED ONCE PER OWNERSHIP. Every pass walked all
+      // the bonds to skip the ones inside a rigid part or between two of them, 40 passes a
+      // pose over a thousand-residue body, and moved each loose residue through freshly
+      // allocated small arrays. The bonds with a hinge residue at one end or both are the
+      // only ones it touches; they are found once for this owner array (which is the same
+      // one each pose), and the arithmetic is done in place. Exactly the same moves.
+      if (this._hingeOwner !== owner) {
+        const list = [];
+        for (let i = 0; i < this.n - 1; i++) {
+          if (this.chainBreaks.has(i)) continue;
+          const fa = owner[i] !== null, fb = owner[i + 1] !== null;
+          if (fa && fb) continue;   // inside one rigid part, or straight between two: the tethers hold it
+          list.push(i, fa ? 1 : fb ? 2 : 0);
+        }
+        this._hingeBonds = Int32Array.from(list); this._hingeOwner = owner;
+      }
+      const HB = this._hingeBonds, REST = this.bondRest;
       for (let it = 0; it < iterations; it++) {
         for (const { domains, pulls } of this.tethers) {
           let s = [0, 0, 0];
           for (const [from, to, reach, exact] of pulls) s = add3(s, pull(from, to, reach, exact));
           shiftDomains(domains, s);
         }
-        for (let i = 0; i < this.n - 1; i++) {
-          if (this.chainBreaks.has(i)) continue;
-          if (owner[i] !== null && owner[i] === owner[i + 1]) continue;
-          const d = sub3(ca[i + 1], ca[i]), l = norm3(d);
+        for (let m = 0; m < HB.length; m += 2) {
+          const i = HB[m], kind = HB[m + 1], a = ca[i], b = ca[i + 1];
+          const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2], l = Math.sqrt(dx * dx + dy * dy + dz * dz);
           if (l < 1e-9) continue;
-          const corr = scale3(d, 0.5 * (l - this.bondRest[i]) / l);
-          const fixedA = owner[i] !== null, fixedB = owner[i + 1] !== null;
-          if (fixedA && fixedB) continue;   // a bond straight between two rigid parts: the tether above holds it, so neither part is bent
-          if (fixedA) ca[i + 1] = sub3(ca[i + 1], scale3(corr, 2));
-          else if (fixedB) ca[i] = add3(ca[i], scale3(corr, 2));
-          else { ca[i] = add3(ca[i], corr); ca[i + 1] = sub3(ca[i + 1], corr); }
+          const c = 0.5 * (l - REST[i]) / l, cx = dx * c, cy = dy * c, cz = dz * c;
+          if (kind === 1) { b[0] -= 2 * cx; b[1] -= 2 * cy; b[2] -= 2 * cz; }        // a is rigid: b moves the whole way
+          else if (kind === 2) { a[0] += 2 * cx; a[1] += 2 * cy; a[2] += 2 * cz; }   // b is rigid: a moves the whole way
+          else { a[0] += cx; a[1] += cy; a[2] += cz; b[0] -= cx; b[1] -= cy; b[2] -= cz; }
         }
       }
     }

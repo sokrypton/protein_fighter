@@ -288,19 +288,36 @@
       // back; a new round's body gathers itself back up from where the last one left it.
       d = Math.max(d, 0.97 * f.shock[i], 0.96 * Math.sqrt(f.settle));
       f.shock[i] *= f.shockDecay;
-      const k = 1 - d, heat = 0;   // no random shaking: unfolded chain moves only when the body does
+      const k = 1 - d;   // no random shaking: unfolded chain moves only when the body does (three Math.random calls a residue a step went to a zero heat)
       loose[i] = d;
       const vx = (p[0] - o[0]) * 0.96, vy = (p[1] - o[1]) * 0.96, vz = (p[2] - o[2]) * 0.96;
       o[0] = p[0]; o[1] = p[1]; o[2] = p[2];
-      p[0] += vx + (Math.random() - 0.5) * heat;
-      p[1] += vy + (Math.random() - 0.5) * heat - fall * d;
-      p[2] += vz + (Math.random() - 0.5) * heat;
+      p[0] += vx;
+      p[1] += vy - fall * d;
+      p[2] += vz;
       p[0] += (t[0] - p[0]) * k; p[1] += (t[1] - p[1]) * k; p[2] += (t[2] - p[2]) * k;
     }
     // Relax bonds, unfolded residues doing the moving; the floor pushes back with friction.
+    // 🔴 ONLY THE BONDS THAT CAN HAVE MOVED. A residue held to its pose within the
+    // looseness the bond pass below already calls intact (LOOSE) sits all but on it after
+    // the pull above, and the pose keeps every bond at its rest length (rig.js), so a bond
+    // between two such residues is already right. The bonds that touch a loose residue
+    // are listed once a step and relaxed as before. (At a thousandth nothing was skipped:
+    // a few blows leave a trace of unfolding over the whole body.)
+    const LOOSE = 0.02;
+    const act = f.form.activeBonds || (f.form.activeBonds = new Int32Array(N));
+    const grip = collapsing ? 0.7 : 0.4;
+    const floorAt = i => {
+      const p = P[i];
+      if (p[1] >= 1) return;
+      const o = f.prev[i];
+      p[1] = 1; o[1] = 1; o[0] += (p[0] - o[0]) * grip; o[2] += (p[2] - o[2]) * grip;
+    };
+    let nAct = 0;
+    for (let i = 0; i < N - 1; i++) if (!BREAK[i] && (loose[i] >= LOOSE || loose[i + 1] >= LOOSE)) act[nAct++] = i;
     for (let it = 0; it < 16; it++) {
-      for (let i = 0; i < N - 1; i++) {
-        if (BREAK[i]) continue;
+      for (let m = 0; m < nAct; m++) {
+        const i = act[m];
         const a = P[i], b = P[i + 1], wa = u[i] * f.limp + 1e-3, wb = u[i + 1] * f.limp + 1e-3;
         const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
         const l = Math.hypot(dx, dy, dz) || 1e-9, s = (l - REST[i]) / l / (wa + wb);   // held at the scaffold's own bond length
@@ -317,14 +334,13 @@
         a[0] += dx * s; a[1] += dy * s; a[2] += dz * s;
         b[0] -= dx * s; b[1] -= dy * s; b[2] -= dz * s;
       }
-      const grip = collapsing ? 0.7 : 0.4;
-      for (let i = 0; i < N; i++) {
-        const p = P[i];
-        if (p[1] >= 1) continue;
-        const o = f.prev[i];
-        p[1] = 1; o[1] = 1; o[0] += (p[0] - o[0]) * grip; o[2] += (p[2] - o[2]) * grip;
-      }
+      // ...the floor, each pass, for the residues the bonds above moved; the rest are not
+      // moved by the passes, so one floor pass over everything after them is the same.
+      // Collapsing, the local-shape pull moves every residue, so every one is floored.
+      if (collapsing) for (let i = 0; i < N; i++) floorAt(i);
+      else for (let m = 0; m < nAct; m++) { const i = act[m]; floorAt(i); floorAt(i + 1); }
     }
+    if (!collapsing) for (let i = 0; i < N; i++) floorAt(i);
     // Bond lengths back to CA_STEP. Intact residues stay exactly where the pose put them:
     // walking the whole chain from one anchor let a dangling loop drag everything after it,
     // folded torso included. Instead each loose stretch is solved on its own. Between two
@@ -337,7 +353,6 @@
       const s = rest / l;
       q[0] = ref[0] + dx * s; q[1] = ref[1] + dy * s; q[2] = ref[2] + dz * s;
     };
-    const LOOSE = 0.02;
     for (let i = 0; i < N;) {
       if (loose[i] < LOOSE) { i++; continue; }
       const a = i;

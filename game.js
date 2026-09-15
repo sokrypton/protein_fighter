@@ -312,6 +312,12 @@
     // a few blows leave a trace of unfolding over the whole body.)
     const LOOSE = 0.02;
     const act = f.form.activeBonds || (f.form.activeBonds = new Int32Array(N));
+    // ...with each bond's share of the correction worked out once: the weights are a
+    // residue's unfolding times the body's limpness, neither of which moves inside a
+    // step, and they were recomputed in all sixteen passes.
+    const wA = f.form.bondWa || (f.form.bondWa = new Float32Array(N));
+    const wB = f.form.bondWb || (f.form.bondWb = new Float32Array(N));
+    const wS = f.form.bondWs || (f.form.bondWs = new Float32Array(N));
     const grip = collapsing ? 0.7 : 0.4;
     const floorAt = i => {
       const p = P[i];
@@ -320,15 +326,20 @@
       p[1] = 1; o[1] = 1; o[0] += (p[0] - o[0]) * grip; o[2] += (p[2] - o[2]) * grip;
     };
     let nAct = 0;
-    for (let i = 0; i < N - 1; i++) if (!BREAK[i] && (loose[i] >= LOOSE || loose[i + 1] >= LOOSE)) act[nAct++] = i;
+    for (let i = 0; i < N - 1; i++) {
+      if (BREAK[i] || (loose[i] < LOOSE && loose[i + 1] < LOOSE)) continue;
+      const wa = u[i] * f.limp + 1e-3, wb = u[i + 1] * f.limp + 1e-3;
+      wA[nAct] = wa; wB[nAct] = wb; wS[nAct] = 1 / (wa + wb);
+      act[nAct++] = i;
+    }
     for (let it = 0; it < 16; it++) {
       for (let m = 0; m < nAct; m++) {
-        const i = act[m];
-        const a = P[i], b = P[i + 1], wa = u[i] * f.limp + 1e-3, wb = u[i + 1] * f.limp + 1e-3;
+        const i = act[m], a = P[i], b = P[i + 1], wa = wA[m], wb = wB[m];
         const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
-        const l = Math.hypot(dx, dy, dz) || 1e-9, s = (l - REST[i]) / l / (wa + wb);   // held at the scaffold's own bond length
-        a[0] += dx * s * wa; a[1] += dy * s * wa; a[2] += dz * s * wa;
-        b[0] -= dx * s * wb; b[1] -= dy * s * wb; b[2] -= dz * s * wb;
+        const l = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-9, s = (l - REST[i]) / l * wS[m];   // held at the scaffold's own bond length
+        const sa = s * wa, sb = s * wb;
+        a[0] += dx * sa; a[1] += dy * sa; a[2] += dz * sa;
+        b[0] -= dx * sb; b[1] -= dy * sb; b[2] -= dz * sb;
       }
       // In a knockout the chain keeps its local shape (helix turns, strand pleats) as it
       // falls, so it crumples under its own weight instead of flowing out like a liquid.

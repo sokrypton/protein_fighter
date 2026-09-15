@@ -18,7 +18,7 @@ The two fighters are different proteins, each other's inside out:
   and a small eight-strand β-barrel head on the loop at the back
 
 Both hang off the same joints (hips, knees, ankles, shoulders, elbows, neck) at the same
-heights, so one set of moves drives both.
+heights, so one set of moves drives both. And either can be any protein: see *Custom proteins*.
 
 ## Play
 
@@ -96,8 +96,9 @@ Playing the CPU, both sets drive P1, and J / K / L punch, kick and block as well
   recovering and kicks you out of the air, so a strike thrown over and over is a bad
   idea. EASY and NORMAL are gentler
 - The title screen is the character select: the two fighters warm up on the membrane,
-  bouncing on their toes and throwing punches and kicks at the air, with a switch over each
-  head, BARREL or BUNDLE; the fighter below swaps as you choose, and a guest picks its own. The settings (players, CPU level, colouring) sit in a
+  bouncing on their toes and throwing punches and kicks at the air, with a switch under each
+  one's feet, BARREL, BUNDLE or CUSTOM; the fighter above swaps as you choose, and a guest
+  picks its own. The settings (players, CPU level, colouring) sit in a
   column between them, under START
 - Punch and kick change with what you are doing. Crouching they become low attacks,
   which unfold only the legs. In the air they hit from above. Pressing jump and an
@@ -107,11 +108,14 @@ Playing the CPU, both sets drive P1, and J / K / L punch, kick and block as well
   confidence (dark blue confident, orange disordered). The map under each health bar is
   a PAE plot, computed as AlphaFold defines aligned error: each row lines the protein up
   on one residue (its frame from that alpha carbon and its two neighbours), and each
-  column is how far another residue then sits from where it was at the start of the
-  round, dark green at 0 Å to white at 30 Å. A limb that swings lights up against the
-  body. A stretch that unfolds goes white along its rows but not its columns: lined up on
-  a disordered residue, nothing else can be placed, while the folded body still places
-  the loose chain roughly where it hangs. It updates live
+  column is how far another residue then sits from where the body's undamaged pose has
+  it this frame, dark green at 0 Å to white at 30 Å: motion costs nothing, damage shows.
+  A stretch that unfolds goes white along its rows but not its columns: lined up on a
+  disordered residue, nothing else can be placed, while the folded body still places
+  the loose chain roughly where it hangs. It updates live. On a big protein the map is
+  at most 64 pixels a side and only every few residues is aligned on (the rows), every
+  residue still scored, so the update costs about the same whatever the size; a model
+  from the AlphaFold DB has its own PAE drawn underneath as the floor
 - Damage is local, and felt by the limb that took it. A hit unfolds a patch around the
   impact, wider for a heavier blow, on the struck side, and deepest where the chain is
   already loose. A leg that has taken the kicks limps: shorter, lower steps, the hips
@@ -122,10 +126,23 @@ Playing the CPU, both sets drive P1, and J / K / L punch, kick and block as well
 - Esc pause
 
 Damage is shown in AlphaFold pLDDT colours: dark blue is intact, orange is
-unfolded. Unfolded residues are a chain under gravity, and the more a protein has
-unfolded, the harder each blow throws that chain around. A knocked-out protein falls
-apart on the floor, and the next round it pulls itself back together. CA–CA bonds are
-held at 3.8 Å throughout.
+unfolded. The pLDDT each residue shows is real lDDT: for every pair of residues within
+15 Å of each other at the bell, whether their distance now is within 0.5, 1, 2 and 4 Å
+of what it is in the body's undamaged pose this frame, the four averaged (`lddt.js`, the
+Cα definition AlphaFold's pLDDT predicts), smoothed along the chain and over a few
+frames so the colours do not flicker. Scored against the pose the rig wants rather
+than the stance at the bell, so walking, punching and a bending loop cost nothing and
+only what a blow has knocked off the pose counts; scaled by the residue's own pLDDT
+where the model came with one, and a residue the model itself had loose shows that
+pLDDT, since hanging off the pose is its nature (and so does a body still gathering
+itself up at a round's start, which lags the pose for a moment without being hurt). So a struck patch turns orange because
+its geometry has gone, and the number on the HUD is the mean. Health is what the protein has left to lose: the built-in fighters start with
+nothing loose; a model with low-confidence stretches starts whole in its own natural
+state and is knocked out when what it had folded has all come apart. Unfolded residues
+are a chain under gravity, and the more a protein has unfolded, the harder each blow
+throws that chain around. A knocked-out protein falls apart on the floor, and the next
+round it pulls itself back together. Every CA–CA bond is held at its own length in the
+scaffold throughout (3.8 Å, or what a real structure's cis peptide has).
 
 Music and effects are synthesised in the browser with WebAudio; SOUND ON/OFF toggles both.
 
@@ -147,6 +164,46 @@ PAE maps refreshed a quarter as often. Everywhere, a frame that has fallen behin
 steps at most three times to catch up, a moment of slow motion rather than a spiral.
 `?fps` on the address shows, under the timer, frames and draws a second and the script
 cost of each, to read off a phone.
+
+## Custom proteins
+
+CUSTOM on either fighter's switch opens a small panel (and again, once one is loaded, to choose another). A PDB id fetches the entry from
+the RCSB and a UniProt accession the model from the AlphaFold DB, as py2Dmol's own
+fetch box takes them (an AlphaFold model comes with its per-residue pLDDT and its PAE);
+a PDB or mmCIF file from any predictor can be dropped instead; GFP, hemoglobin,
+insulin and ubiquitin are there to try. py2Dmol reads the file, the same
+parser the viewer uses, and `custom_pdb.js` makes a fighter of the C-alpha trace:
+
+- stood on its longest axis, whichever way up gives the better body;
+- its protruding stretches found (exposed, reaching out beyond the body, running out
+  and back at most once, built of helix or strand) and given roles by which way they
+  point: up a head, down legs, across arms; the rest is the torso;
+- what it lacks grown out of its own chain: every free terminus and every surface
+  loop is scored for the limb (for a leg the lowest on that side, for an arm the
+  furthest out at mid height), a terminus with a modest bonus since continuing a free
+  end adds no cut, and the best wins; a terminus is continued as an alpha helix, a
+  loop extended as a pair of strands, out and back; at least one limb takes a
+  terminus; a grown limb is built to ideal geometry and carries pLDDT 100; a limb
+  grows where its anchor is,
+  so a body may come out lopsided, as its shape gives, and each leg is made long enough
+  from its own anchor to reach the floor; the two sides need not match;
+- its special by its size: up to 250 residues it whirls, the bundle's helix spin (the
+  hurricane), above that it has the mass for the heat shock, the wave along the
+  membrane; its fold (py2Dmol's own secondary-structure assignment) is read and
+  reported;
+- a predicted model's pLDDT (read only from a file that says it is a prediction; a
+  crystal structure's B-factors are left alone) sets which residues start loose; they
+  sit at the model's own coordinates until a blow moves them, and refold back to them.
+
+The protein is never scaled: a scaled protein has bonds that are no longer 3.8 Å, which
+py2Dmol draws as coil and the physics pulls apart. The grown legs are sized to the
+torso instead. Up to 3000 residues. Over a REMOTE link a custom fighter is sent to
+the other side when it is chosen, or when a newcomer joins; a guest loads its own.
+
+Begun by Ian Anderson (github.com/ianandersonlol/protein_fighter): the parsing, the
+orientation, the arm search, the helix legs, the floating body and the signature moves
+were his; what stands now reads through py2Dmol, finds a whole armature and grows the
+rest from the chain, and fights with the game's own specials.
 
 ## Files
 
@@ -170,6 +227,15 @@ cost of each, to read off a phone.
   poses both rigs through the game's motion and checks every CA–CA bond and rigid
   domain holds; the second runs py2Dmol's own secondary-structure assignment over each
   scaffold and checks that helices read as helix and sheets as strand
+- `custom_pdb.js` — any protein as a fighter: py2Dmol reads it, its limbs are found and the
+  missing ones grown from its chain, its special chosen by its fold, and the fetch by id
+  (see *Custom proteins*); `lddt.js` — lDDT on alpha carbons, prepared once from the stance
+  and scored each PAE update
+- `tests/custom_rig.js` — run with `node`: GFP, hemoglobin and FUS (AlphaFold models in
+  `tests/structures/`, from Ian Anderson's fork) and the built-in scaffolds as
+  files, read, rigged and posed through a punch, a kick and a walk, every bond held,
+  the legs on the floor; PDB and mmCIF agree; chain breaks, the size limit and the lDDT
+- `tests/play_custom.js` — GFP dropped as a file in headless Chrome: read, rigged, fought, rolled
 - `tests/play.js` — plays the game in headless Chrome: a fight against the CPU with a
   walk, a block, strikes, a heat shock, a throw and a PAE click, checking each registered
   and nothing threw; `--remote` runs a host and a guest in two browsers over PeerJS. A
@@ -182,7 +248,7 @@ The walk in `game.js` is learned from `../dance/humanoid_v8_walk.pdb` (CMU mocap
 retargeted onto this rig): each thigh and shin's pitch over a stride, reduced to three
 harmonics and driven by distance walked so the feet don't skate.
 - `vendor/py2Dmol.embed.min.js` — py2Dmol's embed bundle, byte-identical to the build in
-  `../py2Dmol/py2Dmol/resources/bundles/` at its commit `4a45940`. It carries the change
+  `../py2Dmol/py2Dmol/resources/bundles/` at its commit `972186c`. It carries the change
   that lets `replaceFrame` animate without rebuilding the cartoon mesh (the camera and
   extent are held across same-size frames, and the mesh is updated in place: the
   "station" draw the game switches on), the fix for ribbon loops flickering as they
@@ -194,6 +260,7 @@ harmonics and driven by distance walked so the feet don't skate.
   the page under its own canvas instead of being copied into it every frame, which on a
   phone was three passes over the whole screen per frame, and a bare embed that follows
   its element's size, so a resize redraws at the new size the same frame instead of the
-  game rebuilding the viewer after it
+  game rebuilding the viewer after it, and `py2Dmol.paeFromJSON`, the reader for a model's
+  PAE JSON
 
 To update py2Dmol, copy a newer `py2Dmol.embed.min.js` over the vendored one.

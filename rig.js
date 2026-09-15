@@ -33,6 +33,10 @@
     constructor(data) {
       this.n = data.n_ca;
       this.bind = data.ca_xyz.map(p => p.slice());
+      // Each bond's own length in the scaffold: 3.8 A along a trans peptide, shorter across a cis one, and
+      // what a real protein's structure has; a bond is held at what it was, not at an ideal.
+      this.bondRest = new Float32Array(this.n);
+      for (let i = 0; i < this.n - 1; i++) { const a = this.bind[i], b = this.bind[i + 1]; this.bondRest[i] = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) || CA_STEP; }
       this.pivots = data.pivots;
       this.domains = data.domain_indices;
       this.chainBreaks = new Set(data.chain_breaks || []);
@@ -129,7 +133,12 @@
     //   lleg_upper, lleg_lower, lleg_foot, rleg_upper, rleg_lower, rleg_foot, head}
     pose(tr) {
       const P = this.pivots, D = this.domains;
-      const ca = this.bind.map(p => p.slice());
+      // ONE ARRAY, REUSED: a pose a frame on a two-thousand-residue body allocated as
+      // many small arrays a frame, and the collector took its share. Whoever keeps a
+      // pose past the next call copies it (game.js's body does, for the first frame).
+      if (!this._ca) this._ca = this.bind.map(p => p.slice());
+      const ca = this._ca;
+      for (let i = 0; i < this.n; i++) { const b = this.bind[i], c = ca[i]; c[0] = b[0]; c[1] = b[1]; c[2] = b[2]; }
       const Rroot = tr.root_R || mat3Eye(), Troot = tr.root_T || [0, 0, 0];
       const RrootT = matT(Rroot);
       const pelvis = scale3(add3(P.lleg_hip, P.rleg_hip), 0.5);
@@ -212,7 +221,7 @@
           if (owner[i] !== null && owner[i] === owner[i + 1]) continue;
           const d = sub3(ca[i + 1], ca[i]), l = norm3(d);
           if (l < 1e-9) continue;
-          const corr = scale3(d, 0.5 * (l - CA_STEP) / l);
+          const corr = scale3(d, 0.5 * (l - this.bondRest[i]) / l);
           const fixedA = owner[i] !== null, fixedB = owner[i + 1] !== null;
           if (fixedA && fixedB) continue;   // a bond straight between two rigid parts: the tether above holds it, so neither part is bent
           if (fixedA) ca[i + 1] = sub3(ca[i + 1], scale3(corr, 2));

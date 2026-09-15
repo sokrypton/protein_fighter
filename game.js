@@ -40,13 +40,8 @@
     // membrane, mowing the other down; the body itself is the striking part.
     roll:     { duration: 0.95, active: 0.15, window: 0.55, damage: 8,  stun: 0.32, push: 300, fist: 'torso',     text: 'BARREL ROLL', wave: true, roll: true, again: 4, reach: 26 },
     spin:     { duration: 0.8,  active: 0.12, window: 0.5,  damage: 6,  stun: 0.3,  push: 320, fist: 'arms',      text: 'HELIX SPIN', wave: true, spin: true, multi: 2, again: 4 },
-    // Custom protein signature specials:
-    barrel_trap:       { duration: 1.10, active: 0.14, window: 0.22, damage: 15, stun: 0.55, push: 360, fist: 'torso', text: 'BARREL TRAP', wave: true, trap: 'barrel', reach: 68, again: 4 },
-    allosteric_clench: { duration: 0.92, active: 0.15, window: 0.22, damage: 14, stun: 0.45, push: 340, fist: 'torso', text: 'ALLOSTERIC CLAMP', wave: true, trap: 'clamp', reach: 62, again: 4 },
-    condensate_trap:   { duration: 1.15, active: 0.16, window: 0.24, damage: 13, stun: 0.60, push: 280, fist: 'torso', text: 'CONDENSATE TRAP', wave: true, trap: 'condensate', reach: 70, again: 4 },
-    catalytic_surge:   { duration: 0.85, active: 0.15, window: 0.45, damage: 12, stun: 0.40, push: 350, fist: 'torso', text: 'CATALYTIC SURGE', wave: true, surge: true, reach: 75, again: 4 },
   };
-  const SPECIAL = { barrel: 'roll', helix: 'spin', custom: 'barrel_trap' };   // each protein's special, by form
+  const SPECIAL = { barrel: 'roll', helix: 'spin', custom: 'special' };   // each protein's special, by form; a custom one's is set by its fold when it is loaded
   const GRAB = 34;            // Å between torsos, as drawn, within which a throw takes hold
   const ROLL_SPEED = 250;     // Å/s the barrel roll covers ground at
   const THROWS = false;       // the throw is switched off for now: it needs more work before it is worth having
@@ -62,7 +57,12 @@
   // A form is a protein to fight as: its rig (the scaffold, joints and rigid domains),
   // the motion that drives it, and every index set the game reads off the chain. The
   // two fighters are different proteins, so each carries its own.
-  const PAE_BIN = 4;   // residues per PAE pixel, each way
+  // The PAE map: PAE_BIN residues a pixel each way on the built-in fighters, more on a
+  // big custom protein so the map stays 64 pixels a side at most; and on a big protein
+  // only every `stride`-th residue is aligned on (a row), every residue still scored
+  // (the columns), so the update costs about 400 residues' worth of rows whatever the
+  // size rather than the square of it.
+  const PAE_BIN = 4, PAE_SIDE = 64, PAE_ROWS = 400;
   function makeForm(name, data) {
     const rig = new DomainRig(data), n = rig.n, D = rig.domains;
     const motion = window.Motion.create(rig, { MOVES, JUMP_V, JUMP_VX, SQUAT, LANDING });
@@ -78,31 +78,47 @@
       for (let i = Math.max(0, lo - 1); i <= Math.min(n - 1, hi + 1); i++) legs[i] = 1;
     }
     const legIdx = [...legs.keys()].filter(i => legs[i]);
-    const isFloating = !legIdx.length || !!data.isFloating;
     // ...and each leg and arm on its own, so damage is felt by the limb that took it.
     const torso = D.torso || [];
-    const bodyHit = torso.slice(0, Math.min(25, torso.length));
-    const legSide = Object.fromEntries(['l', 'r'].map(s => [s, isFloating ? torso : legIdx.filter(i => rig.owner[i] && rig.owner[i].startsWith(s + 'leg'))]));
-    for (const s of ['l', 'r']) if (!legSide[s].length) legSide[s] = isFloating ? torso : legIdx;
+    const legSide = Object.fromEntries(['l', 'r'].map(s => [s, legIdx.filter(i => rig.owner[i] && rig.owner[i].startsWith(s + 'leg'))]));
+    for (const s of ['l', 'r']) if (!legSide[s].length) legSide[s] = legIdx;
     const armSide = { l: D.larm || [], r: D.rarm || [] };
     // The striking end of each limb, not only its tip.
     const reach = D.rarm?.length ? rig.armParam('rarm') : [];
     const reachL = D.larm?.length ? rig.armParam('larm') : [];
+    // ...a custom fighter with one arm found and the other only mirrored has no residues
+    // in it: its strikes then land with the arm it has
     let fist = (D.rarm || []).filter((_, k) => reach[k] > 0.64);
     let fistL = (D.larm || []).filter((_, k) => reachL[k] > 0.64);
-    if (isFloating && !fist.length) fist = bodyHit;
-    if (isFloating && !fistL.length) fistL = bodyHit;
-    const pb = Math.ceil(n / PAE_BIN);
+    if (!fist.length) fist = fistL; if (!fistL.length) fistL = fist;
+    const paeBin = Math.max(PAE_BIN, Math.ceil(n / PAE_SIDE)), pb = Math.ceil(n / paeBin), stride = Math.max(1, Math.ceil(n / PAE_ROWS));
     const paeCount = new Float32Array(pb * pb);
     const paeSum = new Float32Array(pb * pb);
-    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) paeCount[(i / PAE_BIN | 0) * pb + (j / PAE_BIN | 0)]++;
+    for (let i = 0; i < n; i += stride) for (let j = 0; j < n; j++) paeCount[(i / paeBin | 0) * pb + (j / paeBin | 0)]++;
+    // A real PAE that came with the structure (the AlphaFold DB's), pooled to the map's
+    // pixels: the floor the live map is drawn over, since an error the model already
+    // had does not go away by standing still.
+    let paeBase = null;
+    if (data.pae_flat && data.pae_flat.length) {
+      const m = Math.round(Math.sqrt(data.pae_flat.length));
+      if (m >= 2) {
+        paeBase = new Float32Array(pb * pb); const cnt = new Float32Array(pb * pb);
+        const lim = Math.min(m, n);   // the model's residues, in order; helix legs added past them have none
+        for (let i = 0; i < lim; i++) for (let j = 0; j < lim; j++) { const b = (i / paeBin | 0) * pb + (j / paeBin | 0); paeBase[b] += data.pae_flat[i * m + j] / 8; cnt[b]++; }
+        for (let b = 0; b < pb * pb; b++) paeBase[b] = cnt[b] ? paeBase[b] / cnt[b] : 0;
+      }
+    }
+    // Which rigid part each residue belongs to, for the lDDT: a loop between parts is a
+    // group of its own, so a limb swinging away from the body is not read as the body
+    // coming apart, only what has come apart within a part.
+    const group = new Array(n); let loops = 0;
+    for (let i = 0; i < n; i++) { if (rig.owner[i]) group[i] = rig.owner[i]; else { if (i === 0 || rig.owner[i - 1]) loops++; group[i] = 'loop' + loops; } }
 
     return {
       name, rig, n, motion, legs, legIdx, legSide, armSide, fist, fistL,
-      isFloating,
       armIdx: [...(D.larm || []), ...(D.rarm || [])],
-      kick: isFloating ? bodyHit : [...(D.rleg_shin || []), ...(D.rleg_foot || [])],
-      frontKick: isFloating ? bodyHit : [...(D.lleg_shin || []), ...(D.lleg_foot || [])],
+      kick: [...(D.rleg_shin || []), ...(D.rleg_foot || [])],
+      frontKick: [...(D.lleg_shin || []), ...(D.lleg_foot || [])],
       torso,
       mid: torso.length ? torso[torso.length >> 1] : 0,   // a residue in the middle of the body
       // Deterministic per-residue direction, so jitter is stable frame to frame.
@@ -119,10 +135,14 @@
         return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
       })]),
       // PAE map: residue pairs pooled into each pixel, and scratch space.
-      pb,
-      paeCount, paeSum, paeFrames: new Float64Array(n * 12),
+      pb, paeBin, stride, paeBase,
+      paeCount, paeSum, paeFrames: new Float64Array(n * 12), refFrames: new Float64Array(n * 12),
       chainBreaks: rig.chainBreaks,
+      // ...as a mask, and a running count, for the passes that ask per residue per iteration
+      breakAt: Uint8Array.from({ length: n }, (_, i) => rig.chainBreaks.has(i) ? 1 : 0),
+      breaksBefore: (() => { const c = new Int32Array(n + 1); for (let i = 0; i < n; i++) c[i + 1] = c[i] + (rig.chainBreaks.has(i) ? 1 : 0); return c; })(),
       basePlddt: data.base_plddt ? Float32Array.from(data.base_plddt) : null,
+      group,
     };
   }
   const FORMS = { barrel: makeForm('barrel', window.HUMANOID_V8_RIG), helix: makeForm('helix', window.HELIX_FIGHTER_RIG) };
@@ -158,18 +178,24 @@
       shockDecay: 0.955,             // how slowly the last blow's shaking dies away
       seed: Math.random() * 100,
       coords: null,
-      heldBy: null, heldProg: 0, tumble: null, trapType: null, trapTicked: false,
+      heldBy: null, heldProg: 0, tumble: null,
+      lddt: new Float32Array(N).fill(1),   // each residue's local geometry against its stance at the bell, 0..1
+      shown: new Float32Array(N).fill(100),   // the pLDDT drawn and averaged on the HUD: the base pLDDT scaled by the lDDT
     };
+    if (form.basePlddt) for (let i = 0; i < N; i++) f.shown[i] = form.basePlddt[i];
     if (form.basePlddt) {
       f.basePlddt = form.basePlddt;
       f.initUnfold = new Float32Array(N);
       for (let i = 0; i < N; i++) {
-        // Map low pLDDT to initial baseline unfolding:
-        // pLDDT >= 95 -> 0 unfold; pLDDT <= 45 -> 1.0 unfold (completely loose)
+        // A residue the model was unsure of starts loose, and stays so: pLDDT 95 and
+        // above folded, 45 and below hanging free. Loose, not broken: it moves with
+        // the body's motion as a loose chain does, but sits at the model's own
+        // coordinates until a blow moves it, and refolds back to them.
         const u0 = clamp01((95 - form.basePlddt[i]) / 50);
         f.unfold[i] = u0;
         f.initUnfold[i] = u0;
       }
+      f.initMean = meanUnfold(f);
       f.hp = health(f);
     }
     return f;
@@ -177,9 +203,9 @@
 
   function attack(f, move) {
     const m = MOVES[move];
-    if (!m || f.stun > 0 || f.blockStun > 0 || (MOVES[f.action] && !(m.wave && f.t < 0.09)) || f.action === 'thrown' || f.action === 'trapped' || (f.cooldown > 0 && !m.wave)) return false;
+    if (!m || f.stun > 0 || f.blockStun > 0 || (MOVES[f.action] && !(m.wave && f.t < 0.09)) || f.action === 'thrown' || (f.cooldown > 0 && !m.wave)) return false;
     if (!!m.air !== f.y > 0) return false;
-    if (m.wave) { if (f.y > 0 || clock - f.specialAt < m.again) return false; f.specialAt = clock; if (m.spin) sfx.spin(); else if (m.roll) sfx.roll(); else if (m.trap) sfx.grab(); else sfx.shock(); }
+    if (m.wave) { if (f.y > 0 || clock - f.specialAt < m.again) return false; f.specialAt = clock; if (m.spin) sfx.spin(); else if (m.roll) sfx.roll(); else sfx.shock(); }
     f.hits = 0; f.hitAt = -1;
     Object.assign(f, { action: move, t: 0, hit: false, cooldown: m.duration });
     // The limb swings with a whoosh: short and high for a punch, longer and lower for a
@@ -210,6 +236,10 @@
   function targets(f, clock) {
     const { n: N, jitterDir } = f.form;
     const p = f.form.motion.update(f, { clock, dt: TICK, ...bearing(f) });
+    // The pose as the rig wants it, before any damage is added: what the lDDT and the
+    // PAE score the body against, so that a body that has moved whole scores whole.
+    if (!f.poseRef || f.poseRef.length !== N) f.poseRef = Array.from({ length: N }, () => [0, 0, 0]);
+    for (let i = 0; i < N; i++) { const q = p[i], r = f.poseRef[i]; r[0] = q[0]; r[1] = q[1]; r[2] = q[2]; }
     // A foot set down sends a ripple through the cytoplasm.
     const M = f.motion;
     if (M && M.stepSeq && M.stepSeq !== f.stepSeen) { f.stepSeen = M.stepSeq; if (f.y === 0) window.Cell?.ripple(M.stepX, f.action === 'walk' ? 1 : 0.6); }
@@ -217,7 +247,7 @@
     for (let i = 0; i < N; i++) f.soft[i] += (f.unfold[i] - f.soft[i]) * 0.2;
     f.jit += ((f.hp === 0 ? 11 : 5) - f.jit) * 0.05;
     for (let i = 0; i < N; i++) {
-      const q = p[i], d = f.soft[i];
+      const q = p[i], d = Math.max(0, f.soft[i] - (f.initUnfold ? f.initUnfold[i] : 0));   // the jitter is damage, not the model's own loose stretches
       // The dent grows in over a few frames, then bounces back.
       for (const hit of f.dents) q[0] += hit.dir * hit.amp * Math.exp(-DENT_DECAY * hit.t) * Math.sin(DENT_BOUNCE * hit.t) * hit.w[i];
       if (d < 0.01) continue;
@@ -236,16 +266,16 @@
   const TICK = 1 / 60;
 
   function body(f, clock) {
-    const { n: N, localShape: LOCAL_SHAPE } = f.form;
+    const { n: N, localShape: LOCAL_SHAPE, breakAt: BREAK, breaksBefore: BEFORE } = f.form, REST = f.form.rig.bondRest;
     const T = targets(f, clock), P = f.coords, u = f.unfold;
     f.targets = T;   // where the pose wanted each residue this tick (for inspection)
-    if (!P) { f.prev = T.map(q => q.slice()); return T; }
+    if (!P) { f.prev = T.map(q => q.slice()); return T.map(q => q.slice()); }   // a copy: the rig reuses its pose array
     // Denatured chain is heavy: the pull on each unfolded residue grows with how unfolded
     // the whole protein is, and a knocked-out protein drops hardest of all.
     const collapsing = f.hp === 0;
     f.settle = Math.max(0, f.settle - TICK / 1.5);
     const fall = GRAVITY * TICK * TICK * (1.25 + 2 * meanUnfold(f)) * (collapsing ? 1.6 : 1);
-    const loose = new Float32Array(N);
+    const loose = f.form.looseBuf || (f.form.looseBuf = new Float32Array(N));
     for (let i = 0; i < N; i++) {
       // How loosely a residue hangs off its pose: nothing while folded, rising steeply as
       // it unfolds, so only the low-pLDDT stretches swing and sag when the body moves.
@@ -269,17 +299,17 @@
     // Relax bonds, unfolded residues doing the moving; the floor pushes back with friction.
     for (let it = 0; it < 16; it++) {
       for (let i = 0; i < N - 1; i++) {
-        if (f.form.chainBreaks?.has(i)) continue;
+        if (BREAK[i]) continue;
         const a = P[i], b = P[i + 1], wa = u[i] * f.limp + 1e-3, wb = u[i + 1] * f.limp + 1e-3;
         const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
-        const l = Math.hypot(dx, dy, dz) || 1e-9, s = (l - CA_STEP) / l / (wa + wb);
+        const l = Math.hypot(dx, dy, dz) || 1e-9, s = (l - REST[i]) / l / (wa + wb);   // held at the scaffold's own bond length
         a[0] += dx * s * wa; a[1] += dy * s * wa; a[2] += dz * s * wa;
         b[0] -= dx * s * wb; b[1] -= dy * s * wb; b[2] -= dz * s * wb;
       }
       // In a knockout the chain keeps its local shape (helix turns, strand pleats) as it
       // falls, so it crumples under its own weight instead of flowing out like a liquid.
       if (collapsing) for (const [gap, rest] of LOCAL_SHAPE) for (let i = 0; i < N - gap; i++) {
-        if (f.form.chainBreaks && [...f.form.chainBreaks].some(cb => cb >= i && cb < i + gap)) continue;
+        if (BEFORE[i + gap] - BEFORE[i] > 0) continue;   // a break somewhere in the span: no shape across it
         const a = P[i], b = P[i + gap];
         const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
         const l = Math.hypot(dx, dy, dz) || 1e-9, s = 0.25 * (l - rest[i]) / l;
@@ -299,28 +329,28 @@
     // folded torso included. Instead each loose stretch is solved on its own. Between two
     // intact residues that is FABRIK (inward from both ends, a few rounds); a stretch that
     // runs off a chain end, or a chain that is loose throughout, is laid out exactly.
-    const place = (ref, q) => {
+    const place = (ref, q, rest) => {
       const dx = q[0] - ref[0], dy = q[1] - ref[1], dz = q[2] - ref[2];
       const l = Math.hypot(dx, dy, dz);
-      if (l < 1e-6) { q[0] = ref[0] + CA_STEP; return; }
-      const s = CA_STEP / l;
+      if (l < 1e-6) { q[0] = ref[0] + rest; return; }
+      const s = rest / l;
       q[0] = ref[0] + dx * s; q[1] = ref[1] + dy * s; q[2] = ref[2] + dz * s;
     };
     const LOOSE = 0.02;
     for (let i = 0; i < N;) {
       if (loose[i] < LOOSE) { i++; continue; }
       const a = i;
-      while (i < N && loose[i] >= LOOSE && !f.form.chainBreaks?.has(i)) i++;
-      if (i < N && loose[i] >= LOOSE && f.form.chainBreaks?.has(i)) i++;
+      while (i < N && loose[i] >= LOOSE && !BREAK[i]) i++;
+      if (i < N && loose[i] >= LOOSE && BREAK[i]) i++;
       const b = i - 1, left = a - 1, right = b + 1;
-      const isLeftUnbound = left < 0 || f.form.chainBreaks?.has(left);
-      const isRightUnbound = right >= N || f.form.chainBreaks?.has(b);
-      if (isLeftUnbound && isRightUnbound) for (let j = a + 1; j <= b; j++) place(P[j - 1], P[j]);
-      else if (isLeftUnbound) for (let j = b; j >= a; j--) place(P[j + 1], P[j]);
-      else if (isRightUnbound) for (let j = a; j <= b; j++) place(P[j - 1], P[j]);
+      const isLeftUnbound = left < 0 || BREAK[left];
+      const isRightUnbound = right >= N || BREAK[b];
+      if (isLeftUnbound && isRightUnbound) for (let j = a + 1; j <= b; j++) place(P[j - 1], P[j], REST[j - 1]);
+      else if (isLeftUnbound) for (let j = b; j >= a; j--) place(P[j + 1], P[j], REST[j]);
+      else if (isRightUnbound) for (let j = a; j <= b; j++) place(P[j - 1], P[j], REST[j - 1]);
       else for (let round = 0; round < 10; round++) {
-        for (let j = b; j >= a; j--) place(P[j + 1], P[j]);
-        for (let j = a; j <= b; j++) place(P[j - 1], P[j]);
+        for (let j = b; j >= a; j--) place(P[j + 1], P[j], REST[j]);
+        for (let j = a; j <= b; j++) place(P[j - 1], P[j], REST[j - 1]);
       }
     }
     return P;
@@ -338,9 +368,18 @@
   // hit shows on the part that was actually struck rather than at the attacker's fist.
   function contact(a, b) {
     let best = null, bestD = MOVES[a.action].reach ?? STRIKE_REACH[a.form.name] ?? REACH;
-    for (const s of strikePoints(a, a.action)) for (const q of b.coords) {
-      const d = Math.hypot(s[0] - q[0], s[1] - q[1], s[2] - q[2]);
-      if (d < bestD) { bestD = d; best = q; }
+    // Each axis first, against the best so far: on a two-thousand-residue body almost
+    // every residue is out of reach on x alone, and a compare is a fraction of a hypot.
+    const B = b.coords;
+    for (const s of strikePoints(a, a.action)) {
+      const sx = s[0], sy = s[1], sz = s[2];
+      for (let j = 0; j < B.length; j++) {
+        const q = B[j], dx = q[0] - sx; if (dx > bestD || dx < -bestD) continue;
+        const dy = q[1] - sy; if (dy > bestD || dy < -bestD) continue;
+        const dz = q[2] - sz; if (dz > bestD || dz < -bestD) continue;
+        const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        if (d < bestD) { bestD = d; best = q; }
+      }
     }
     return best && best.slice();
   }
@@ -387,7 +426,11 @@
   // read off the unfolding, not kept alongside it, so the bar, the colours and the
   // knockout always agree.
   const meanUnfold = f => f.unfold.reduce((s, v) => s + v, 0) / f.unfold.length;
-  const health = f => Math.max(0, Math.round(100 * (1 - meanUnfold(f))));
+  // Health is what the protein has left to lose: a body whose model came with loose
+  // stretches (low pLDDT) starts whole, in its own natural state, and is knocked out
+  // when everything it had folded has come apart. The built-in fighters start with
+  // nothing loose, so for them it is simply how much is still folded.
+  const health = f => { const lost = meanUnfold(f) - (f.initMean || 0), can = 1 - (f.initMean || 0); return Math.max(0, Math.round(100 * (1 - (can > 1e-6 ? lost / can : 1)))); };
   // pLDDT 100 is intact; fully denatured lands just under 50, AlphaFold's line for
   // disordered, so it reaches the orange band (the palette calls exactly 50 yellow).
   const toPlddt = d => 100 - 50.2 * d;
@@ -493,27 +536,23 @@
   }
 
   function pdbText(a, b) {
+    // One chain per fighter, its residues numbered in order, with a number skipped at
+    // every break in the chain: py2Dmol joins a residue only to the adjacent number, so a
+    // gap is a break in the backbone as it draws it (a custom protein's chains and
+    // missing loops, and the helix legs given to one, each a piece of its own).
     let s = '', n = 1;
-    const writeChains = (coords, defaultChain, form) => {
+    const write = (coords, chain, form) => {
       const breaks = form?.chainBreaks || new Set();
-      const chainLetters = defaultChain === 'A'
-        ? ['A', 'C', 'E', 'G', 'I', 'K', 'M', 'O', 'Q', 'S', 'U', 'W', 'Y']
-        : ['B', 'D', 'F', 'H', 'J', 'L', 'N', 'P', 'R', 'T', 'V', 'X', 'Z'];
-      let chainIdx = 0;
-      let curChain = chainLetters[0];
+      let num = 0;
       coords.forEach((q, i) => {
-        s += `ATOM  ${String(n++).padStart(5)}  CA  GLY ${curChain}${String(i + 1).padStart(4)}    ` +
-          q.map(v => v.toFixed(3).padStart(8)).join('') + '  1.00 90.00           C\n';
-        if (breaks.has(i)) {
-          s += 'TER\n';
-          chainIdx = Math.min(chainLetters.length - 1, chainIdx + 1);
-          curChain = chainLetters[chainIdx];
-        }
+        num++;
+        s += `ATOM  ${String(n++).padStart(5)}  CA  GLY ${chain}${String(num).padStart(4)}    ` + q.map(v => v.toFixed(3).padStart(8)).join('') + '  1.00 90.00           C\n';
+        if (breaks.has(i)) num++;
       });
       s += 'TER\n';
     };
-    writeChains(a, 'A', fighters?.[0]?.form || FORMS[pick[0]]);
-    writeChains(b, 'B', fighters?.[1]?.form || FORMS[pick[1]]);
+    write(a, 'A', fighters?.[0]?.form || FORMS[pick[0]]);
+    write(b, 'B', fighters?.[1]?.form || FORMS[pick[1]]);
     return s + 'END\n';
   }
 
@@ -630,21 +669,22 @@
     arena.style.setProperty('--grid-x', gridX.toFixed(1) + 'px');
   }
 
+  let plddtBuf = null;   // the pLDDTs handed to py2Dmol, filled in place
   function draw() {
     const [a, b] = fighters;
     // replaceFrame draws the frame, and (py2Dmol's animation rule) keeps the camera
     // and the mesh where they are, so the cartoon is updated in place, not rebuilt.
     pinCamera();
     placeFloor();
-    const plddtOf = (f, i) => {
-      if (!f.basePlddt) return toPlddt(f.unfold[i]);
-      const extra = Math.max(0, f.unfold[i] - (f.initUnfold ? f.initUnfold[i] : 0));
-      return Math.max(10, f.basePlddt[i] - 50.2 * extra);
-    };
+    // Each residue's pLDDT as shown: its base (100 for the built-in fighters, the model's
+    // own for a custom one) scaled by its lDDT against its stance, updated with the PAE.
+    if (!plddtBuf || plddtBuf.length !== a.form.n + b.form.n) plddtBuf = new Array(a.form.n + b.form.n);
+    for (let i = 0; i < a.form.n; i++) plddtBuf[i] = a.shown[i];
+    for (let i = 0; i < b.form.n; i++) plddtBuf[a.form.n + i] = b.shown[i];
     viewer.replaceFrame({
       ...template,
       coords: a.coords.concat(b.coords),
-      plddts: a.coords.map((_, i) => plddtOf(a, i)).concat(b.coords.map((_, i) => plddtOf(b, i))),
+      plddts: plddtBuf,
     }, 'arena');
   }
 
@@ -657,12 +697,13 @@
   const netEvent = (...e) => { if (net.link) net.events.push(e); };
   let fighters, wins = [0, 0], round = 1, time = 60, phase = 'ready', clock = 0, koTimer = 0, ai = 0, hitstop = 0;
   let tick = 0;   // game ticks, for effects that fire every few
-  const names = () => ['P1', fighters?.[1]?.form?.displayName || (pick[1] === 'custom' && FORMS.custom?.displayName) || 'P2'];
+  const names = () => [0, 1].map(i => fighters?.[i]?.form?.displayName || FORMS[pick[i]]?.displayName || (i ? 'P2' : 'P1'));
 
   function resetRound() {
     const old = fighters;
     const apart = phase !== 'ready' ? 80 : SIDE_PLATES.matches ? 112 : 100;   // warming up behind the menu they stand wider, clear of the settings between them; wider still on a phone on its side
     fighters = [newFighter(-apart, 1, FORMS[pick[0]]), newFighter(apart, -1, FORMS[pick[1]])];
+    drawHalf = PHONE || fighters[0].form.n + fighters[1].form.n > BIG;
     CAMERA.x = 0;
     clearFinisher();
     netEvent('reset', pick.slice());
@@ -670,7 +711,9 @@
     for (const h of held) h.clear();
     for (const f of fighters) { f.coords = body(f, clock); f.top = Math.max(...f.coords.map(q => q[1])); }   // the head's top, for the plate over it
     // The PAE reference is each fighter as it stands at the bell: healthy, in its stance.
-    for (const f of fighters) { f.paeLocal = localPositions(f.coords); f.pae = new Float32Array(f.form.pb * f.form.pb); }
+    // Which pairs the lDDT scores (neighbours in the stance), and room for the pose's local
+    // positions: both are measured against the undamaged pose each update, not the stance.
+    for (const f of fighters) { f.paeLocal = new Float32Array(Math.ceil(f.form.n / f.form.stride) * f.form.n * 3); f.pae = new Float32Array(f.form.pb * f.form.pb); f.pairs = window.LDDT.prepare(f.coords, null); }
     // Then each body starts from wherever the last round left it, heap and all, and pulls
     // itself back together, rather than popping into place.
     if (old) fighters.forEach((f, i) => {
@@ -736,13 +779,16 @@
     const show = phase === 'ready' && !net.watch && (!$('modes').hidden || net.guest);
     if (wrap.hidden !== !show) wrap.hidden = !show;
     if (!show) return;
-    const at = SIDE_PLATES.matches ? 'side' : UNDER_PLATES.matches ? 'under' : 'over';
+    // Under where the fighter stands, on the floor line, from its standing x rather than
+    // its body, so nothing it does warming up (a bounce, a hop, a swing) moves them;
+    // beside the shoulders on a phone on its side, where the pad has the floor.
+    const at = SIDE_PLATES.matches ? 'side' : 'under';
     if (wrap.dataset.at !== at) wrap.dataset.at = at;
     const { W, project } = view();
     for (const el of wrap.children) {
       if (el.hidden) continue;
       const f = fighters[+el.dataset.player];
-      let [sx, sy] = at === 'side' ? project(barrelX(f) - f.facing * 26, f.top - 14, 0) : at === 'under' ? project(barrelX(f), -2, 0) : project(barrelX(f), f.top + 4, 0);
+      let [sx, sy] = at === 'side' ? project(f.x - f.facing * 26, f.top - 14, 0) : project(f.x, -2, 0);
       // Kept on the screen: a fighter can stand near the edge.
       const w = el.offsetWidth, lo = at === 'side' && f.facing > 0 ? w + 4 : w / 2 + 4, hi = at === 'side' && f.facing < 0 ? W - w - 4 : W - w / 2 - 4;
       sx = Math.max(lo, Math.min(hi, sx));
@@ -763,7 +809,7 @@
   }
 
   function walk(f, dir, dt, speed = 1) {
-    if (f.stun > 0 || f.blockStun > 0 || MOVES[f.action] || f.action === 'thrown' || f.action === 'trapped' || f.y > 0) return;
+    if (f.stun > 0 || f.blockStun > 0 || MOVES[f.action] || f.action === 'thrown' || f.y > 0) return;
     const pace = (dir === -f.facing ? 0.6 : 1) * mobility(f) * speed;   // backing off is slower; bad legs slower still
     const dx = dir * WALK * pace * dt;
     f.x += dx;
@@ -799,7 +845,7 @@
   // you are heading.
   function control(f, h, dt) {
     const dir = h.has('block') ? 0 : (h.has('right') ? 1 : 0) - (h.has('left') ? 1 : 0);   // holding block roots the feet
-    const free = f.stun <= 0 && f.blockStun <= 0 && !MOVES[f.action] && f.action !== 'thrown' && f.action !== 'trapped' && f.y === 0 && !f.squat;
+    const free = f.stun <= 0 && f.blockStun <= 0 && !MOVES[f.action] && f.action !== 'thrown' && f.y === 0 && !f.squat;
     f.crouch = (free || f.blockStun > 0) && h.has('down');
     walk(f, f.crouch || f.squat ? 0 : dir, dt);
     if (h.has('up') && free) { f.squat = SQUAT; f.jumpDir = dir; f.upReleased = false; h.delete('up'); }
@@ -839,7 +885,7 @@
       else if (free && gap < 75 && Math.random() < L.attack) {
         const r = Math.random();
         if (THROWS && gap < 48 && p.y === 0 && r < 0.3) attack(c, 'throw');
-        else if (gap > (c.form.name === 'barrel' ? 60 : 25) && gap < (c.form.name === 'barrel' ? 170 : 75) && p.y === 0 && r < L.special) attack(c, SPECIAL[c.form.name]);
+        else if (gap > (SPECIAL[c.form.name] === 'roll' ? 60 : 30) && gap < (SPECIAL[c.form.name] === 'roll' ? 170 : 70) && p.y === 0 && r < L.special) attack(c, SPECIAL[c.form.name]);
         else if (gap < 60 && r < 0.25) attack(c, Math.random() < 0.5 ? 'roundhouse' : 'straight');
         else attack(c, r < 0.4 ? 'punch' : r < 0.7 ? 'kick' : r < 0.85 ? 'lowkick' : 'lowpunch');
       }
@@ -856,7 +902,7 @@
     // The player's move has come and gone and it is still recovering: hit back now, a
     // throw if it is right there. And a player sailing in through the air is kicked out
     // of it. This is what makes a strike thrown over and over a bad idea.
-    const free = c.stun <= 0 && c.blockStun <= 0 && !MOVES[c.action] && c.action !== 'thrown' && c.action !== 'trapped' && c.y === 0 && !c.squat;
+    const free = c.stun <= 0 && c.blockStun <= 0 && !MOVES[c.action] && c.action !== 'thrown' && c.y === 0 && !c.squat;
     if (free && pm && !pm.air && p.t > pm.active + pm.window && gap < 80 && Math.random() < L.punish) {
       c.crouch = false;
       attack(c, THROWS && gap < 48 ? 'throw' : Math.random() < 0.5 ? 'kick' : 'punch');
@@ -887,12 +933,25 @@
   // 42 Å; adding this to the barrel gap keeps each one the same distance from contact.
   const BARREL_SPAN = 42 - TOUCH;
   const barrelX = f => f.form.torso.reduce((s, i) => s + f.coords[i][0], 0) / f.form.torso.length;
+  // The closest two torso residues come, one body to the other. Every pair on the
+  // built-in fighters (a few thousand); on a big custom protein a torso can be two
+  // thousand residues and every pair four million, so past a size it is every k-th
+  // residue against every k-th, then the k around the nearest pair exactly.
   function barrelGap(a, b) {
-    let best = Infinity;
-    for (const i of a.form.torso) {
-      const q = a.coords[i];
-      for (const j of b.form.torso) {
-        const r = b.coords[j], dx = q[0] - r[0], dy = q[1] - r[1], dz = q[2] - r[2];
+    const A = a.form.torso, B = b.form.torso, ka = Math.max(1, Math.ceil(A.length / 120)), kb = Math.max(1, Math.ceil(B.length / 120));
+    let best = Infinity, bi = 0, bj = 0;
+    for (let ii = 0; ii < A.length; ii += ka) {
+      const q = a.coords[A[ii]];
+      for (let jj = 0; jj < B.length; jj += kb) {
+        const r = b.coords[B[jj]], dx = q[0] - r[0], dy = q[1] - r[1], dz = q[2] - r[2];
+        const d = dx * dx + dy * dy + dz * dz;
+        if (d < best) { best = d; bi = ii; bj = jj; }
+      }
+    }
+    if (ka > 1 || kb > 1) for (let ii = Math.max(0, bi - ka); ii < Math.min(A.length, bi + ka + 1); ii++) {
+      const q = a.coords[A[ii]];
+      for (let jj = Math.max(0, bj - kb); jj < Math.min(B.length, bj + kb + 1); jj++) {
+        const r = b.coords[B[jj]], dx = q[0] - r[0], dy = q[1] - r[1], dz = q[2] - r[2];
         const d = dx * dx + dy * dy + dz * dz;
         if (d < best) best = d;
       }
@@ -955,9 +1014,8 @@
     if (mode === 2 || mode === 3) control(c, held[1], dt);
     else cpu(c, p, dt);
     // The guard shows as a pose: arms tight over the head, the front knee up.
-    fighters.forEach((f, i) => { f.guard = f.y === 0 && f.stun <= 0 && !MOVES[f.action] && f.action !== 'thrown' && f.action !== 'trapped' && f.hp > 0 && (held[i].has('block') || f.blockHold > 0); });
+    fighters.forEach((f, i) => { f.guard = f.y === 0 && f.stun <= 0 && !MOVES[f.action] && f.action !== 'thrown' && f.hp > 0 && (held[i].has('block') || f.blockHold > 0); });
     for (const f of fighters) if (f.action === 'thrown' && f.heldBy != null) holdThrown(f);
-    for (const f of fighters) if (f.action === 'trapped' && f.heldBy != null) holdTrapped(f);
     // The barrel roll travels: along the membrane at a run for the rolling part, kicking
     // up lipids behind it, and a ripple with each turn.
     for (const f of fighters) if (f.action === 'roll') {
@@ -976,7 +1034,6 @@
       const m = MOVES[f.action], live = m && f.t > m.active && f.t < m.active + m.window;
       if (f.action === 'spin' && live && tick % 3 === 0) for (const tip of [f.form.fist, f.form.fistL]) { const at = f.coords[tip[tip.length - 1]], c = f.coords[f.form.mid]; window.Cell?.fling(at, Math.sign(at[0] - c[0]) || f.facing, 1.2); }
       if (f.action === 'special' && f.t > m.active * 0.5 && f.t < m.active + 0.12 && tick % 3 === 0) for (const tip of [f.form.fist, f.form.fistL]) window.Cell?.fling(f.coords[tip[tip.length - 1]], f.facing, 1);
-      if (f.action === 'catalytic_surge' && live && tick % 2 === 0) { const at = f.coords[f.form.mid] || [f.x, f.y + 60, 0]; window.Cell?.spark(at, (tick % 4 < 2 ? 1 : -1), 4, 'hit'); }
     }
 
     keepTogether();
@@ -996,7 +1053,7 @@
       // the body instead of passing through it before the active frame.
       if (!m || b.hp === 0 || a.t < m.active * 0.6) return;
       if (a.hit && !(m.multi && a.hits < m.multi && a.t - a.hitAt > 0.2)) return;   // a spin may land again, a moment on
-      if (m.wave && !m.spin && !m.roll && !m.trap && !m.surge) {   // the shock wave: reaching the other, low along the floor
+      if (m.wave && !m.spin && !m.roll) {   // the shock wave: reaching the other, low along the floor
         const w = waveAt(a);
         if (w == null || Math.abs(w - barrelX(b)) > 24 || b.y > 30) return;
         const at = b.coords[b.form.mid].slice(); at[1] = Math.min(at[1], 30);
@@ -1005,54 +1062,9 @@
         landHit(i, 'special', at, power); netEvent('hit', i, 'special', at, power); flash(at, m.text); sfx.hit(m.damage * power / 13);
         return;
       }
-      if (m.trap) {
-        if (a.t < m.active) return;
-        const gap = barrelGap(a, b);
-        if (b.action !== 'thrown' && b.action !== 'trapped' && gap < m.reach) {
-          const at = b.coords[b.form.mid]?.slice() || [b.x, b.y + 40, 0];
-          const power = strikePower(a, a.action);
-          if (canBlock(b, 1 - i, m)) {
-            blockHit(i, a.action, at, power);
-            netEvent('block', i, a.action, at, power);
-            flash(at, 'BLOCK');
-            sfx.block();
-            return;
-          }
-          grabTrap(i, a.action);
-          netEvent('trap', i, a.action);
-          flash(at, m.text);
-          sfx.grab();
-        } else if (a.t > m.active + m.window) {
-          if (!a.hit) sfx.whiff();
-          a.hit = true;
-        }
-        return;
-      }
-      if (m.surge) {
-        if (a.t < m.active) return;
-        if (a.t > m.active + m.window) { if (!a.hit) sfx.whiff(); a.hit = true; return; }
-        const gap = barrelGap(a, b);
-        if (gap < m.reach) {
-          const at = b.coords[b.form.mid]?.slice() || [b.x, b.y + 40, 0];
-          const power = strikePower(a, a.action);
-          if (canBlock(b, 1 - i, m)) {
-            blockHit(i, a.action, at, power);
-            netEvent('block', i, a.action, at, power);
-            flash(at, 'BLOCK');
-            sfx.block();
-            return;
-          }
-          landHit(i, a.action, at, power);
-          netEvent('hit', i, a.action, at, power);
-          flash(at, m.text);
-          window.Cell?.ripple(a.x, 2.2);
-          sfx.shock();
-        }
-        return;
-      }
       if (m.throw) {   // a grab: the other must be on the ground and against this one
         if (a.t < m.active) return;
-        if (b.y === 0 && b.action !== 'thrown' && b.action !== 'trapped' && barrelGap(a, b) < GRAB) { grab(i); netEvent('throw', i); flash(b.coords[b.form.mid], m.text); sfx.grab(); }
+        if (b.y === 0 && b.action !== 'thrown' && barrelGap(a, b) < GRAB) { grab(i); netEvent('throw', i); flash(b.coords[b.form.mid], m.text); sfx.grab(); }
         else { a.hit = true; sfx.whiff(); }
         return;
       }
@@ -1152,75 +1164,6 @@
     hitstop = 0.06;
     sfx.hit(1);
     if (b.hp === 0) { b.action = 'ko'; b.t = 0; }
-  }
-
-  function grabTrap(i, move) {
-    const a = fighters[i], b = fighters[1 - i];
-    a.hit = true;
-    b.action = 'trapped'; b.t = 0; b.heldBy = i; b.heldProg = 0; b.tumble = null; b.stun = 0; b.blockStun = 0; b.squat = 0; b.crouch = false; b.queued = null; b.vx = 0; b.vy = 0;
-    b.facing = -a.facing; b.combo = 0; b.trapType = MOVES[move]?.trap || 'barrel'; b.trapTicked = false;
-  }
-  function holdTrapped(b) {
-    const a = fighters[b.heldBy], m = MOVES[a?.action];
-    if (!a || !m || !m.trap || (a.action !== 'barrel_trap' && a.action !== 'allosteric_clench' && a.action !== 'condensate_trap')) {
-      b.heldBy = null; b.heldProg = 0; b.trapTicked = false;
-      if (b.action === 'trapped') b.action = 'idle';
-      return;
-    }
-    const holdDuration = m.duration - m.active;
-    const prog = clamp01((a.t - m.active) / holdDuration);
-    b.heldProg = prog;
-
-    const coreY = a.form.isFloating ? 65 : 55;
-    const targetX = a.x + a.facing * 4;
-    const targetY = coreY;
-
-    if (prog < 0.25) {
-      const pull = prog / 0.25;
-      b.x += (targetX - b.x) * (0.35 + 0.3 * pull);
-      b.y += (targetY - b.y) * (0.35 + 0.3 * pull);
-    } else if (prog < 0.82) {
-      b.x = targetX + Math.sin(clock * 50) * 3;
-      b.y = targetY + Math.cos(clock * 45) * 3;
-
-      if (tick % 2 === 0) {
-        if (b.trapType === 'barrel') {
-          window.Cell?.spark([a.x + a.facing * 6, targetY + 22, 0], a.facing, 3.5, 'hit');
-          window.Cell?.spark([a.x - a.facing * 6, targetY - 18, 0], -a.facing, 2.5, 'block');
-        } else if (b.trapType === 'clamp') {
-          window.Cell?.spark([a.x + a.facing * 10, targetY + (Math.random() * 20 - 10), 0], a.facing, 3, 'hit');
-        } else {
-          if (tick % 6 === 0) window.Cell?.ripple(a.x, 0.8);
-        }
-      }
-      CAMERA.shake = Math.max(CAMERA.shake, 2.2);
-
-      if (prog > 0.5 && !b.trapTicked) {
-        b.trapTicked = true;
-        sfx.hit(0.5);
-      }
-    } else {
-      const power = strikePower(a, a.action);
-      const at = (b.coords && b.coords[b.form.mid]) ? b.coords[b.form.mid].slice() : [b.x, b.y + 30, 0];
-      b.heldBy = null; b.heldProg = 0; b.trapTicked = false;
-      b.vx = a.facing * m.push * power;
-      b.vy = 360;
-      b.y = Math.max(b.y, 10);
-      b.tumble = 3.2;
-      b.action = 'thrown';
-      wound(b, at, m.damage * DAMAGE_SCALE * power, false, a.facing);
-      dent(b, at, a.facing, m.damage * power);
-      b.lastHit = at; b.stun = m.stun; b.lastLow = false;
-      a.combo = (a.combo || 0) + 1;
-      damageNumber(at, Math.round(m.damage * DAMAGE_SCALE * power * 10) / 10, a.combo);
-      b.form.motion.jolt(b, { head: 18 * power, arms: 10 * power, legs: 10 * power });
-      window.Cell?.spark(at, a.facing, m.damage * power * 1.5, 'hit');
-      window.Cell?.ripple(a.x, 2.0);
-      CAMERA.shake = 8;
-      hitstop = 0.08;
-      sfx.hit(1.3);
-      if (b.hp === 0) { b.action = 'ko'; b.t = 0; }
-    }
   }
 
   // A blow from fighter i's `move` landing at `at` with this much of its strength.
@@ -1395,12 +1338,13 @@
     }
     return F;
   }
-  // Every residue's position in every residue's frame, N x N x 3: the reference.
-  function localPositions(coords) {
-    const N = coords.length, F = localFrames(coords, new Float64Array(N * 12)), L = new Float32Array(N * N * 3);
-    for (let i = 0; i < N; i++) {
-      const k = i * 12;
-      for (let j = 0, m = i * N * 3; j < N; j++, m += 3) {
+  // Every residue's position in every sampled residue's frame, rows x N x 3, into L.
+  function localPositions(coords, stride = 1, L, F0) {
+    const N = coords.length, F = localFrames(coords, F0 || new Float64Array(N * 12)), rows = Math.ceil(N / stride);
+    L = L || new Float32Array(rows * N * 3);
+    for (let r = 0; r < rows; r++) {
+      const i = r * stride, k = i * 12;
+      for (let j = 0, m = r * N * 3; j < N; j++, m += 3) {
         const q = coords[j], vx = q[0] - F[k], vy = q[1] - F[k + 1], vz = q[2] - F[k + 2];
         L[m] = F[k + 3] * vx + F[k + 4] * vy + F[k + 5] * vz;
         L[m + 1] = F[k + 6] * vx + F[k + 7] * vy + F[k + 8] * vz;
@@ -1409,28 +1353,56 @@
     }
     return L;
   }
+  const LDDT_EASE = 0.3;   // per update: about a third of the way each time, a few updates to settle
   function updatePAE(f) {
     if (!f.paeLocal) return;
-    const { n: N, pb: PB, paeCount: PAE_COUNT, paeSum, paeFrames } = f.form;
-    const P = f.coords, F = localFrames(P, paeFrames), L = f.paeLocal;
+    const { n: N, pb: PB, paeBin, stride, paeCount: PAE_COUNT, paeSum, paeFrames, paeBase } = f.form;
+    // The reference is the body's undamaged pose this frame: a limb that swung, a loop
+    // that bent with it, score nothing; what a blow moved off the pose is the error.
+    const P = f.coords, F = localFrames(P, paeFrames), L = localPositions(f.poseRef || P, stride, f.paeLocal, f.form.refFrames);
     paeSum.fill(0);
-    for (let i = 0; i < N; i++) {
-      const k = i * 12, row = (i / PAE_BIN | 0) * PB;
+    for (let i = 0, r = 0; i < N; i += stride, r++) {
+      const k = i * 12, row = (i / paeBin | 0) * PB;
       const ox = F[k], oy = F[k + 1], oz = F[k + 2];
       const ax = F[k + 3], ay = F[k + 4], az = F[k + 5];
       const bx = F[k + 6], by = F[k + 7], bz = F[k + 8];
       const cx = F[k + 9], cy = F[k + 10], cz = F[k + 11];
-      for (let j = 0, m = i * N * 3; j < N; j++, m += 3) {
+      for (let j = 0, m = r * N * 3; j < N; j++, m += 3) {
         const q = P[j], vx = q[0] - ox, vy = q[1] - oy, vz = q[2] - oz;
         const dx = ax * vx + ay * vy + az * vz - L[m];
         const dy = bx * vx + by * vy + bz * vz - L[m + 1];
         const dz = cx * vx + cy * vy + cz * vz - L[m + 2];
-        paeSum[row + (j / PAE_BIN | 0)] += Math.sqrt(dx * dx + dy * dy + dz * dz);
+        paeSum[row + (j / paeBin | 0)] += Math.sqrt(dx * dx + dy * dy + dz * dz);
       }
     }
     for (let b = 0; b < PB * PB; b++) {
-      const e = Math.min(PAE_MAX, paeSum[b] / PAE_COUNT[b]);
+      const live = PAE_COUNT[b] ? paeSum[b] / PAE_COUNT[b] : 0;   // a pixel no sampled row falls in (the last, on a big protein) shows the model's own error alone
+      const e = Math.min(PAE_MAX, Math.max(live, paeBase ? paeBase[b] : 0));   // the model's own error is the floor
       f.pae[b] = f.pae[b] * 0.5 + e * 0.5;   // barely smoothed, so one frame's twitch does not flicker
+    }
+    // ...and the lDDT on the same cadence: what each residue's surroundings within its
+    // rigid part still measure as they did at the bell, and from it the pLDDT shown.
+    if (f.pairs) {
+      // Scored raw, then smoothed two ways so the colours do not flicker: along the
+      // chain (1-2-1 over a residue and its bonded neighbours, never across a break),
+      // since a residue in a few pairs steps in quarters as one pair crosses a
+      // threshold; and over time, each residue's shown score easing toward the raw one.
+      const raw = f.lddtRaw || (f.lddtRaw = new Float32Array(N)), sm = f.lddtSmooth || (f.lddtSmooth = new Float32Array(N)), BREAK = f.form.breakAt;
+      window.LDDT.score(f.pairs, P, raw, f.poseRef);
+      for (let i = 0; i < N; i++) {
+        let v = 2 * raw[i], w = 2;
+        if (i > 0 && !BREAK[i - 1]) { v += raw[i - 1]; w++; }
+        if (i < N - 1 && !BREAK[i]) { v += raw[i + 1]; w++; }
+        sm[i] = v / w;
+      }
+      for (let i = 0; i < N; i++) f.lddt[i] += (sm[i] - f.lddt[i]) * LDDT_EASE;
+      // A residue the model itself had loose (low pLDDT) hangs off the pose by nature,
+      // which its base already says: it shows its base, and only a folded residue is
+      // marked down by what has come away from the pose. A body still gathering itself
+      // up at a round's start (f.settle, held loosely in body()) is not damaged either,
+      // so what it lags the pose by while it gathers is excused the same way.
+      const base = f.basePlddt, u0 = f.initUnfold, gather = 0.96 * Math.sqrt(f.settle || 0);
+      for (let i = 0; i < N; i++) { const loose = Math.max(gather, u0 ? u0[i] : 0); f.shown[i] = (base ? base[i] : 100) * (f.lddt[i] * (1 - loose) + loose); }
     }
   }
   function drawPAE(f, i) {
@@ -1452,11 +1424,12 @@
     const f = fighters[i], canvas = $('pae' + i), r = canvas.getBoundingClientRect();
     const bx = Math.floor((e.clientX - r.left) / r.width * f.form.pb), by = Math.floor((e.clientY - r.top) / r.height * f.form.pb);
     const base = i ? fighters[0].form.n : 0, idx = [];
-    for (const bin of [by, bx]) for (let k = bin * PAE_BIN; k < Math.min(f.form.n, (bin + 1) * PAE_BIN); k++) idx.push(base + k);
+    const B = f.form.paeBin;
+    for (const bin of [by, bx]) for (let k = bin * B; k < Math.min(f.form.n, (bin + 1) * B); k++) idx.push(base + k);
     try { viewer.select(idx); } catch (err) { console.warn('selection', err); return; }
     clearTimeout(unpick); unpick = setTimeout(() => { try { viewer.unselect(idx); } catch {} }, 1500);
     const err = f.pae[by * f.form.pb + bx];
-    flash([f.x, 0, 0], `${by * PAE_BIN + 1}–${by * PAE_BIN + PAE_BIN} on ${bx * PAE_BIN + 1}–${bx * PAE_BIN + PAE_BIN}: ${err.toFixed(0)} Å`);
+    flash([f.x, 0, 0], `${by * B + 1}–${Math.min(f.form.n, by * B + B)} on ${bx * B + 1}–${Math.min(f.form.n, bx * B + B)}: ${err.toFixed(0)} Å`);
   }
   for (const i of [0, 1]) { const c = $('pae' + i); c.style.pointerEvents = 'auto'; c.style.cursor = 'crosshair'; c.onclick = e => pickPAE(i, e); }
 
@@ -1466,9 +1439,7 @@
   const setStyle = (id, k, v) => { if (shown[id + k] !== v) { shown[id + k] = v; $(id).style[k] = v; } };
   function hud() {
     fighters.forEach((f, i) => {
-      const plddt = f.basePlddt
-        ? Math.max(10, Math.round(f.basePlddt.reduce((s, b, idx) => s + Math.max(0, b - 50.2 * Math.max(0, f.unfold[idx] - (f.initUnfold ? f.initUnfold[idx] : 0))), 0) / f.basePlddt.length))
-        : toPlddt(meanUnfold(f));
+      let plddt = 0; for (let k = 0; k < f.shown.length; k++) plddt += f.shown[k]; plddt /= f.shown.length;
       setStyle('hp' + i, 'width', f.hp + '%');
       setStyle('hp' + i, 'background', bandColor(plddt));
       setText('fold' + i, `pLDDT ${Math.round(plddt)}`);
@@ -1479,7 +1450,7 @@
       const meter = $('meter' + i); if (meter.classList.contains('ready') !== (charge >= 1)) meter.classList.toggle('ready', charge >= 1);
       setText('wins' + i, [0, 1].map(n => (wins[i] > n ? '●' : '○')).join(' '));
     });
-    setText('name1', names()[1]);
+    const nm = names(); setText('name0', nm[0]); setText('name1', nm[1]);
     if ($('p2pad').hidden !== (mode !== 2)) $('p2pad').hidden = mode !== 2;
     setText('timer', String(Math.ceil(time)).padStart(2, '0'));
     setText('round', 'ROUND ' + String(Math.min(round, 3)).padStart(2, '0'));
@@ -1767,150 +1738,106 @@
     b.onclick = () => {
       const [i, form] = b.dataset.pick.split(':');
       if (net.guest && +i !== 1) return;
-      if (form === 'custom' && !FORMS.custom) {
-        openCustomModal();
-        return;
-      }
+      if (form.startsWith('custom') && (!FORMS[form] || pick[+i] === form)) { if (!net.guest || +i === 1) openCustomModal(+i); return; }   // none yet, or the one fought as clicked again: choose another
       pick[+i] = form; showPicks();
       if (net.guest) { net.send?.({ t: 'pick', form }); return; }
       if (phase === 'ready') { resetRound(); fighters[+i].warmNext = 0.2; }   // the new fighter shows what it has
     };
   }
 
-  // ------------------------------------------------------------- custom PDB UI
-  let pendingCustom = null;
-  function openCustomModal() {
-    const modal = $('custom-modal');
-    if (modal) modal.hidden = false;
-    const status = $('custom-status');
-    if (status) status.hidden = true;
-    const btnLoad = $('btn-load-custom');
-    if (btnLoad) btnLoad.disabled = !pendingCustom;
+  // ------------------------------------------------------------- custom proteins
+  // Any structure as P2 (Ian Anderson's addition): a file dropped or browsed, one of the
+  // presets, or a model fetched from the AlphaFold DB by UniProt accession, read and
+  // rigged by custom_pdb.js. What it found is shown before the fight is accepted.
+  let pendingCustom = null, customFor = 1;   // the last analysed structure, and which player it is for
+  const customSpec = [null, null];             // what each player fights as, for a guest joining
+  function openCustomModal(player = 1) {
+    customFor = player;
+    $('custom-title').textContent = `CUSTOM P${player + 1}`;
+    $('custom-modal').hidden = false;
+    $('custom-status').hidden = !pendingCustom;
+    $('btn-load-custom').disabled = !pendingCustom;
   }
-  function closeCustomModal() {
-    const modal = $('custom-modal');
-    if (modal) modal.hidden = true;
+  function closeCustomModal() { $('custom-modal').hidden = true; }
+  const esc = t => String(t).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+  // One line: what it is, what it has, what it does.
+  function describeCustom(res) {
+    const R = res.roles, has = [];
+    if (R.head) has.push('head');
+    if (R.larm || R.rarm) has.push(res.armsAdded ? 'arms grown' : 'arms');
+    has.push(res.legsAdded ? 'legs grown' : 'legs');
+    return `<strong>${esc(res.name)}</strong> · ${res.residues} residues · ${res.hasPlddt ? `pLDDT ${res.meanPlddt}` : 'no confidence in the file'}${res.pae ? ' · PAE' : ''} · ${has.join(', ')} · special <strong>${esc(res.special.title)}</strong>`;
   }
-
-  async function processStructureText(name, text) {
+  function analyseCustom(name, text, extra = {}) {
     const statusEl = $('custom-status');
-    if (!statusEl) return;
-    statusEl.hidden = false;
-    statusEl.innerHTML = 'Analyzing protein structure & rigging joints...';
+    statusEl.hidden = false; statusEl.textContent = 'reading…';
     try {
-      const res = window.CustomPdb.buildCustomFighter(name, text);
+      const res = window.CustomPdb.buildCustomFighter(name, text, { pae: extra.pae || null });
+      res.title = extra.title || '';
       pendingCustom = res;
-      statusEl.innerHTML = `<strong>${res.name}</strong> ready to fight!<br>` +
-        `• Structure: ${res.coreResidues} residues (Pure floating hover mode 🌀)<br>` +
-        `• Mean pLDDT: <strong>${res.coreMeanPlddt}</strong> (Starting HP: <strong>${Math.round(res.coreMeanPlddt)}</strong>)<br>` +
-        `• Signature Move: <strong>${res.feature.title}</strong> — ${res.feature.description}<br>` +
-        `• Auto-detected Strike Arm: residues ${res.armRange.start + 1}–${res.armRange.end + 1} (${res.armRange.end - res.armRange.start + 1} res)`;
-      const btnLoad = $('btn-load-custom');
-      if (btnLoad) btnLoad.disabled = false;
+      statusEl.innerHTML = describeCustom(res);
+      $('btn-load-custom').disabled = false;
     } catch (err) {
-      statusEl.innerHTML = `<span style="color:red">Error: ${err.message}</span>`;
-      const btnLoad = $('btn-load-custom');
-      if (btnLoad) btnLoad.disabled = true;
+      statusEl.innerHTML = `<span style="color:#e55">${esc(err.message)}</span>`;
+      $('btn-load-custom').disabled = true;
+      pendingCustom = null;
     }
   }
-  const processPdbText = processStructureText;
+  // The custom fighter as a form, from what buildCustomFighter returned (or what a guest
+  // or host sent over the link: the same object).
+  // ...as player i's form, custom0 or custom1: each player may have its own.
+  function installCustom(spec, i) {
+    const key = 'custom' + i;
+    FORMS[key] = makeForm(key, { ...spec.rigData, pae_flat: spec.pae || null });
+    FORMS[key].displayName = String(spec.name).toUpperCase();
+    SPECIAL[key] = spec.special.special;
+    customSpec[i] = spec;
+    $('pick-custom-' + i).textContent = String(spec.name).toUpperCase().slice(0, 10);
+  }
+  const customWire = spec => ({ name: spec.name, rigData: spec.rigData, special: spec.special, pae: spec.pae ? Array.from(spec.pae) : null, roles: spec.roles, legsAdded: spec.legsAdded, residues: spec.residues, hasPlddt: spec.hasPlddt, meanPlddt: spec.meanPlddt });
+  $('btn-cancel-custom').onclick = () => closeCustomModal();
 
-  const btnOpenCustom = $('btn-open-custom');
-  if (btnOpenCustom) btnOpenCustom.onclick = () => openCustomModal();
-  const btnCancelCustom = $('btn-cancel-custom');
-  if (btnCancelCustom) btnCancelCustom.onclick = () => closeCustomModal();
-
-  // Preset buttons
-  const PRESET_FILES = {
-    gfp: { name: 'GFP', file: 'scripts/gfp.pdb' },
-    hba: { name: 'HEMOGLOBIN', file: 'scripts/hemoglobin_alpha.pdb' },
-    fus: { name: 'FUS', file: 'scripts/fus.pdb' },
+  // A few to try, by accession: the presets fill the field and fetch, so they work from
+  // any page that reaches the archives, a file opened straight from disk included.
+  const PRESETS = { gfp: 'P42212', hba: 'P69905', insulin: 'P01308', ubq: '1UBQ' };   // three from the AlphaFold DB, one from the PDB
+  for (const b of document.querySelectorAll('[data-preset]')) b.onclick = () => { $('uniprot-input').value = PRESETS[b.dataset.preset] || b.dataset.preset; $('btn-fetch-af').click(); };
+  // A PDB id or a UniProt accession, as py2Dmol's own fetch box takes them (custom_pdb.js).
+  $('btn-fetch-af').onclick = async () => {
+    const val = $('uniprot-input').value.trim(); if (!val) return;
+    const statusEl = $('custom-status'); statusEl.hidden = false; statusEl.textContent = `fetching ${val.toUpperCase()}…`;
+    try {
+      const got = await window.CustomPdb.fetchStructure(val);
+      analyseCustom(got.name, got.text, { pae: got.pae, title: [got.title, got.organism].filter(Boolean).join(', ') });
+    } catch (err) { statusEl.innerHTML = `<span style="color:#e55">${esc(err.message)}</span>`; }
   };
-  for (const b of document.querySelectorAll('[data-preset]')) {
-    b.onclick = async () => {
-      const p = PRESET_FILES[b.dataset.preset];
-      if (!p) return;
-      const statusEl = $('custom-status');
-      if (statusEl) { statusEl.hidden = false; statusEl.innerHTML = `Loading preset ${p.name}...`; }
-      try {
-        const res = await fetch(p.file);
-        if (!res.ok) throw new Error(`Could not load ${p.file}`);
-        const text = await res.text();
-        await processPdbText(p.name, text);
-      } catch (err) {
-        if (statusEl) statusEl.innerHTML = `<span style="color:red">Failed to load preset: ${err.message}</span>`;
-      }
-    };
-  }
-
-  // AlphaFold DB fetch
-  const btnFetchAf = $('btn-fetch-af');
-  if (btnFetchAf) {
-    btnFetchAf.onclick = async () => {
-      const val = $('uniprot-input')?.value?.trim();
-      if (!val) return;
-      const statusEl = $('custom-status');
-      if (statusEl) { statusEl.hidden = false; statusEl.innerHTML = `Fetching ${val.toUpperCase()} from AlphaFold DB...`; }
-      try {
-        const data = await window.CustomPdb.fetchAlphaFoldPdb(val);
-        await processPdbText(data.gene || data.uniprotId || val, data.pdbText);
-      } catch (err) {
-        if (statusEl) statusEl.innerHTML = `<span style="color:red">AlphaFold fetch failed: ${err.message}</span>`;
-      }
-    };
-  }
-  const uniprotInput = $('uniprot-input');
-  if (uniprotInput) uniprotInput.onkeydown = e => { if (e.key === 'Enter') $('btn-fetch-af')?.click(); };
-
-  // File browse & drag and drop
-  const btnBrowse = $('btn-browse');
-  if (btnBrowse) btnBrowse.onclick = () => $('file-input')?.click();
+  $('uniprot-input').onkeydown = e => { if (e.key === 'Enter') $('btn-fetch-af').click(); };
+  // A file, dropped or browsed.
+  const readFile = file => {
+    if (!file) return;
+    const name = file.name.replace(/\.(pdb|ent|cif|mmcif|mcif|txt)$/i, '');
+    const reader = new FileReader();
+    reader.onload = ev => analyseCustom(name, ev.target.result);
+    reader.readAsText(file);
+  };
+  $('btn-browse').onclick = () => $('file-input').click();
   const dropZone = $('drop-zone');
-  if (dropZone) {
-    dropZone.onclick = e => { if (e.target !== $('btn-browse')) $('file-input')?.click(); };
-    dropZone.ondragover = e => { e.preventDefault(); dropZone.classList.add('dragover'); };
-    dropZone.ondragleave = () => dropZone.classList.remove('dragover');
-    dropZone.ondrop = e => {
-      e.preventDefault(); dropZone.classList.remove('dragover');
-      const file = e.dataTransfer.files?.[0];
-      if (!file) return;
-      const name = file.name.replace(/\.(pdb|ent|cif|mcif|txt)$/i, '');
-      const reader = new FileReader();
-      reader.onload = ev => processStructureText(name, ev.target.result);
-      reader.readAsText(file);
-    };
-  }
-  const fileInput = $('file-input');
-  if (fileInput) {
-    fileInput.onchange = e => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      const name = file.name.replace(/\.(pdb|ent|cif|mcif|txt)$/i, '');
-      const reader = new FileReader();
-      reader.onload = ev => {
-        fileInput.value = '';
-        processPdbText(name, ev.target.result);
-      };
-      reader.readAsText(file);
-    };
-  }
-
-  // Confirm loading custom fighter for P2
-  const btnLoadCustom = $('btn-load-custom');
-  if (btnLoadCustom) {
-    btnLoadCustom.onclick = () => {
-      if (!pendingCustom) return;
-      FORMS.custom = makeForm('custom', pendingCustom.rigData);
-      FORMS.custom.displayName = pendingCustom.name.toUpperCase();
-      SPECIAL.custom = pendingCustom.feature?.special || 'barrel_trap';
-      pick[1] = 'custom';
-      const pickBtn = $('pick-p2-custom');
-      if (pickBtn) pickBtn.textContent = pendingCustom.name.toUpperCase().slice(0, 8);
-      showPicks();
-      closeCustomModal();
-      resetRound();
-    };
-  }
+  dropZone.onclick = e => { if (e.target !== $('btn-browse')) $('file-input').click(); };
+  dropZone.ondragover = e => { e.preventDefault(); dropZone.classList.add('dragover'); };
+  dropZone.ondragleave = () => dropZone.classList.remove('dragover');
+  dropZone.ondrop = e => { e.preventDefault(); dropZone.classList.remove('dragover'); readFile(e.dataTransfer.files?.[0]); };
+  $('file-input').onchange = e => { readFile(e.target.files?.[0]); e.target.value = ''; };
+  // Fight it: installed here, and, over a link, on the other side too.
+  $('btn-load-custom').onclick = () => {
+    if (!pendingCustom) return;
+    const i = net.guest ? 1 : customFor, wire = customWire(pendingCustom);
+    installCustom(wire, i);
+    pick[i] = 'custom' + i;
+    showPicks();
+    closeCustomModal();
+    if (net.guest) { net.send?.({ t: 'custom', spec: wire }); return; }   // the host installs it, and its reset comes back with the pick
+    netEvent('custom', i, wire);
+    if (phase === 'ready') { resetRound(); fighters[i].warmNext = 0.2; }
+  };
   for (const b of document.querySelectorAll('[data-level]')) {
     b.onclick = () => { level = b.dataset.level; showLevel(); try { localStorage.setItem(LEVEL_KEY, level); } catch {} };
   }
@@ -1981,6 +1908,11 @@
 
   // ----------------------------------------------------------------------- loop
   let last = performance.now(), acc = 0, drawn = 0, drawnAt = 0;   // frames drawn, and when the last was
+  // Drawn at most thirty times a second on a touch screen, and anywhere once the bodies
+  // are big: py2Dmol's mesh update is the frame's cost and grows with the residues, so
+  // two fighters past a thousand residues between them draw at half rate on a desktop too.
+  const BIG = 1000;
+  let drawHalf = PHONE;
   const DT = 1 / 60;
   let tripped = 0;   // exceptions a step has thrown, reported once
   function frame(now) {
@@ -2018,14 +1950,14 @@
     // The cartoon is the cost of a frame (py2Dmol's mesh update, some 12 ms of script on
     // a desktop and three times that on a phone), so on a touch screen it is drawn at
     // most thirty times a second while the fight still steps at sixty.
-    if (moved && (!PHONE || now - drawnAt >= 28)) {
+    if (moved && (!drawHalf || now - drawnAt >= 28)) {
       const t0 = SHOW_FPS ? performance.now() : 0;
       draw(); drawnAt = now;
       if (SHOW_FPS) { fps.drawMs += performance.now() - t0; fps.draws++; }
       // Live PAE maps: every residue against every residue, so the two maps take turns,
       // one a draw (one every other draw on a phone), not through the hit freeze, where
       // nothing moved, and not while the maps are off the screen.
-      const every = PHONE ? 2 : 1;
+      const every = drawHalf ? 2 : 1;
       if (hitstop <= 0 && drawn % every === 0 && !SIDE_PLATES.matches) { const i = (drawn / every) & 1, f = fighters[i]; updatePAE(f); drawPAE(f, i); }
       drawn++;
     }
@@ -2065,7 +1997,7 @@
   // last packet (hits, callouts, the finisher, sounds). The unfolding travels only when
   // it changed. About 2 KB a packet.
   const SNAP = ['x', 'y', 'vx', 'vy', 'facing', 'hp', 'crouch', 'guard', 'sinceHit', 'squat', 'jumpDir', 'upReleased', 'landing', 'landPower',
-    'fatigue', 'jit', 'settle', 'action', 't', 'hit', 'hits', 'hitAt', 'stun', 'cooldown', 'limp', 'seed', 'lastLow', 'blockStun', 'blockHold', 'heldBy', 'heldProg', 'tumble', 'trapType', 'combo', 'comboAir', 'specialAt'];
+    'fatigue', 'jit', 'settle', 'action', 't', 'hit', 'hits', 'hitAt', 'stun', 'cooldown', 'limp', 'seed', 'lastLow', 'blockStun', 'blockHold', 'heldBy', 'heldProg', 'tumble', 'combo', 'comboAir', 'specialAt'];
   // What a guest keeps its own for the fighter it drives: its keys have already moved
   // it, and the host's word on where it was a moment ago would only drag it back.
   const OWN = new Set(['y', 'vy', 'crouch', 'squat', 'jumpDir', 'upReleased', 'landing', 'landPower', 'action', 't']);
@@ -2113,11 +2045,11 @@
     net.pkts++; net.bytes += JSON.stringify(h).length + (u ? u.byteLength || u.length || 0 : 0);
     // What happened first: a new round makes new fighters, a hit is replayed on them.
     for (const e of h.ev || []) {
-      if (e[0] === 'reset') { if (e[1]) { pick[0] = e[1][0]; pick[1] = e[1][1]; showPicks(); } resetRound(); }
+      if (e[0] === 'custom') installCustom(e[2], e[1]);
+      else if (e[0] === 'reset') { if (e[1]) { pick[0] = e[1][0]; pick[1] = e[1][1]; showPicks(); } resetRound(); }
       else if (e[0] === 'hit' && fighters[e[1]].motion) landHit(e[1], e[2], e[3], e[4]);
       else if (e[0] === 'block' && fighters[e[1]].motion) blockHit(e[1], e[2], e[3], e[4]);
       else if (e[0] === 'throw' && fighters[e[1]].motion) grab(e[1]);
-      else if (e[0] === 'trap' && fighters[e[1]].motion) grabTrap(e[1], e[2]);
       else if (e[0] === 'flash') flash([e[1], 0, 0], e[2]);
       else if (e[0] === 'finish') finisher(e[1], true);
       else if (e[0] === 'sfx' && sfx[e[1]]) sfx[e[1]](...e.slice(2));
@@ -2151,6 +2083,7 @@
     held[1].add(act);
   }
   function hostInput(m) {
+    if (m && m.t === 'custom' && m.spec) { installCustom(m.spec, 1); netEvent('custom', 1, m.spec); pick[1] = 'custom1'; showPicks(); resetRound(); return; }   // the guest's own protein
     if (m && m.t === 'pick' && FORMS[m.form]) { pick[1] = m.form; showPicks(); if (phase === 'ready') resetRound(); return; }
     if (!m || m.t !== 'in') return;
     if (m.a === 'escape') return press('escape');
@@ -2169,6 +2102,7 @@
       // it stopped (the reset the newcomer gets rebuilds its fighters; the packets set them).
       onGuest: () => {
         $('qr').hidden = true; $('modes').hidden = false;
+        customSpec.forEach((spec, i) => { if (spec) net.events.push(['custom', i, spec]); });   // a newcomer needs the custom fighters before the reset that picks them
         if (phase === 'ready') return start(3);
         net.events.push(['reset', pick.slice()]);
         if (net.dropped) { net.dropped = false; if (phase === 'paused') { phase = 'playing'; $('overlay').hidden = true; startMusic(); } }

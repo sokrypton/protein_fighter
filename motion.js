@@ -68,10 +68,11 @@
     const PELVIS_Y = (P.lleg_hip[1] + P.rleg_hip[1]) / 2, PELVIS_Z = (P.lleg_hip[2] + P.rleg_hip[2]) / 2;
     // The foot's residues from its ankle, and the lowest of them for a foot turned by
     // `pitch` (as the rig turns a domain: y' = cos·y + sin·z).
-    const isFloating = !D.lleg_foot?.length;
-    const FOOT = D.lleg_foot.map(i => [rig.bind[i][1] - P.lleg_ankle[1], rig.bind[i][2] - P.lleg_ankle[2]]);
+    // Both feet, each from its own ankle: a custom body's two legs may differ (one grown
+    // from a terminus, one from a loop), and the sole is the lower of the two.
+    const FOOT = [...(D.lleg_foot || []).map(i => [rig.bind[i][1] - P.lleg_ankle[1], rig.bind[i][2] - P.lleg_ankle[2]]),
+      ...(D.rleg_foot || []).map(i => [rig.bind[i][1] - P.rleg_ankle[1], rig.bind[i][2] - P.rleg_ankle[2]])];
     const soleBelow = pitch => {
-      if (!FOOT.length) return -12.0;
       const c = Math.cos(pitch), s = Math.sin(pitch);
       let m = Infinity;
       for (const [y, z] of FOOT) m = Math.min(m, c * y + s * z);
@@ -84,10 +85,19 @@
     // the hip (forward, up) for the front (left) and back (right) foot. Crouching, slumping
     // and a knockout all sit somewhere between the two: `low` 0 standing … 1 kneeling. In
     // the crouch the back foot is up on its toes, so its ankle rides higher.
-    const STAND = { l: [7.5, -59.9], r: [-17, -61] }, KNEEL = { l: [20, -24.2], r: [-16, -16.2] };
+    // ...measured on the built-in legs, 61.5 Å hip to ankle, and scaled to each leg's own
+    // length: a custom body's legs come in whatever length its loops and termini give,
+    // and a leg twice as long stands twice as tall. Each side keeps its own hip too: a
+    // lopsided body hangs its hips at different heights, and its feet still meet one
+    // floor, since every offset here is from the leg's own hip and the pelvis sits
+    // between the two.
+    const LEG_REF = 61.5, legK = side => (LEG[side + 'leg'].thigh + LEG[side + 'leg'].shin) / LEG_REF;
+    const STAND = { l: [7.5 * legK('l'), -59.9 * legK('l')], r: [-17 * legK('r'), -61 * legK('r')] };
+    const KNEEL = { l: [20 * legK('l'), -24.2 * legK('l')], r: [-16 * legK('r'), -16.2 * legK('r')] };
+    const hipOff = side => P[side + 'leg_hip'][1] - (P.lleg_hip[1] + P.rleg_hip[1]) / 2;   // this hip above the pelvis
     const restFwd = (side, low) => lerp(STAND[side][0], KNEEL[side][0], low);
-    const toeRaise = (side, low) => Math.max(0, lerp(STAND[side][1] - STAND.l[1], KNEEL[side][1] - KNEEL.l[1], low));
-    const hipHeight = low => -lerp(STAND.l[1], KNEEL.l[1], low);   // the hips above a flat planted ankle
+    const toeRaise = (side, low) => Math.max(0, lerp(STAND[side][1] + hipOff(side) - STAND.l[1] - hipOff('l'), KNEEL[side][1] + hipOff(side) - KNEEL.l[1] - hipOff('l'), low));
+    const hipHeight = low => -lerp(STAND.l[1], KNEEL.l[1], low) - hipOff('l');   // the pelvis above a flat planted ankle
 
     // ---------------------------------------------------------------------- walk
     // The walk from ../dance: CMU mocap 07_01 retargeted onto this rig, reduced to three
@@ -105,13 +115,15 @@
       for (let h = 1; h <= 3; h++) a += c[2 * h - 1] * Math.cos(2 * Math.PI * h * u) + c[2 * h] * Math.sin(2 * Math.PI * h * u);
       return a;
     };
+    // ...sampled through each leg's own lengths: a custom body's two legs may differ, and
+    // each foot must reach the floor its own leg can reach.
     const SAMPLES = 200;
-    const WALK = Array.from({ length: SAMPLES }, (_, i) => {
-      const u = i / SAMPLES, t = gaitAngle(GAIT.thigh, u), s = gaitAngle(GAIT.shin, u), [dz, dy] = legFK('lleg', t, s);
+    const WALKS = Object.fromEntries(SIDES.map(side => [side, Array.from({ length: SAMPLES }, (_, i) => {
+      const u = i / SAMPLES, t = gaitAngle(GAIT.thigh, u), s = gaitAngle(GAIT.shin, u), [dz, dy] = legFK(side + 'leg', t, s);
       return { dz, dy, pitch: s, sole: dy + soleBelow(s) };
-    });
-    function walkAt(u) {
-      const x = wrap(u) * SAMPLES, i = Math.floor(x), k = x - i, a = WALK[i], b = WALK[(i + 1) % SAMPLES];
+    })])), WALK = WALKS.l;
+    function walkAt(side, u) {
+      const W = WALKS[side], x = wrap(u) * SAMPLES, i = Math.floor(x), k = x - i, a = W[i], b = W[(i + 1) % SAMPLES];
       return { dz: lerp(a.dz, b.dz, k), dy: lerp(a.dy, b.dy, k), pitch: lerp(a.pitch, b.pitch, k), sole: lerp(a.sole, b.sole, k) };
     }
     // A foot bears weight from heel strike, where it is furthest forward, to toe-off, where it
@@ -126,9 +138,13 @@
     // wide enough that crouching (the front foot rests 12.5 Å further forward) kneels in
     // place rather than shuffling.
     const STEP_TOL = 14, STEP_TIME = 0.2, STEP_LIFT = 5;
-    const ROLL_CENTRE = 19;   // Å: the barrel's centre above the membrane while it rolls on its side
-    // ...and where the torso's centre is from the pelvis (measured on both rigs: 15 up, 6 forward).
-    const TORSO_UP = 15, TORSO_FWD = 6.4;
+    // The torso's centre from the pelvis, and how far its residues reach from its own
+    // long axis: the radius it rolls on when it lies on its side for the barrel roll,
+    // its centre that high above the membrane. Read off the rig, so a custom protein's
+    // body rolls on its own size (the built-in barrel: 15 up, 6.4 forward, radius 19).
+    const TORSO_C = (() => { const idx = D.torso || []; if (!idx.length) return [0, PELVIS_Y + 15, PELVIS_Z + 6.4]; const c = [0, 0, 0]; for (const i of idx) for (let k = 0; k < 3; k++) c[k] += rig.bind[i][k] / idx.length; return c; })();
+    const TORSO_UP = TORSO_C[1] - PELVIS_Y, TORSO_FWD = TORSO_C[2] - PELVIS_Z;
+    const ROLL_CENTRE = (() => { const idx = D.torso || []; if (!idx.length) return 19; const r = idx.map(i => Math.hypot(rig.bind[i][1] - TORSO_C[1], rig.bind[i][2] - TORSO_C[2])).sort((a, b) => a - b); return Math.max(8, r[Math.floor(0.85 * r.length)]); })();
     const SKID = 60;   // Å/s: shoved faster than this, planted feet skid along with the body
 
     // ------------------------------------------------------------------ springs
@@ -145,7 +161,7 @@
     // What the body is doing, as targets. env: clock, and what damage has done to its
     // bearing - sag (slumped), crawl (nearly gone), tired (breathing), kickRange.
     function poseOf(f, env) {
-      const pose = f.hp <= 0 ? 'ko' : f.action === 'thrown' ? 'thrown' : f.action === 'trapped' ? 'trapped' : f.stun > 0 ? 'hurt' : (f.blockStun > 0 || f.guard) ? 'block' : MOVES[f.action] ? f.action
+      const pose = f.hp <= 0 ? 'ko' : f.action === 'thrown' ? 'thrown' : f.stun > 0 ? 'hurt' : (f.blockStun > 0 || f.guard) ? 'block' : MOVES[f.action] ? f.action
         : f.y > 0 ? 'jump' : f.action;
       const s = MOVES[pose] ? extension(pose, f.t) : 0;
       const { sag, crawl, tired, kickRange: kr } = env;
@@ -162,7 +178,7 @@
         low: f.crouch ? 1 : ease(clamp01(sag + bob)),
       };
       // A leg as it stands at a given depth: where a kick starts from and returns to.
-      const restIK = (side, low = T.low) => legIK(side + 'leg', restFwd(side, low), toeRaise(side, low) - hipHeight(low));
+      const restIK = (side, low = T.low) => legIK(side + 'leg', restFwd(side, low), toeRaise(side, low) - hipHeight(low) - hipOff(side));   // from this leg's own hip
       // In the air the legs follow the arc: a partial tuck at take-off, tightest at the
       // top, reaching for the floor on the way down; the body leans into a forward jump.
       const airLegs = () => {
@@ -184,31 +200,30 @@
         if (pose === 'lowpunch') T.low = 1;
         if (pose === 'airpunch') airLegs();
       } else if (pose === 'kick') {
-        if (isFloating) {
-          T.pitch = s * 0.35; T.fwd = s * 16; T.head = s * 0.15;
-          T.rarmU = -0.5 - s * 0.3; T.rarmL = 0.5;
-        } else {
-          const legR = 0.5 + 0.5 * kr, chamber = ease(f.t / 0.06) * (1 - s);
-          const [bt, bs] = restIK('l', T.low * (1 - clamp01(chamber + s)));
-          T.legs = { l: [bt + legR * (chamber * 1.5 + s * 1.75), bs + legR * (-chamber * 1.3 + s * 1.65), legR * s * 0.9] };
-          T.pitch = kr * s * 0.5;
-          T.larmU = -0.65 - kr * s * 0.55; T.larmL = 1.15 - kr * s * 0.75;
-          T.rarmU = -1 - kr * s * 0.9; T.rarmL = 0.95 - kr * s * 1.7;
-          T.head = -kr * s * 0.25;   // the head stays up as the body leans back
-        }
+        // Lean back into the kick so the raised leg has room. A battered protein cannot
+        // lean that far or swing its arms out for balance (kickRange), and its leg lifts
+        // half as much less, since its slumped hips are already low. The swing starts from
+        // the leg as it stands and is shaped on a standing leg as it comes out: added to a
+        // slumped leg's forward thigh, the same swing flung the foot higher the more
+        // battered the protein was (57 Å at 90% unfolded, against 52 at 50%).
+        // The front leg kicks (a lead-leg front kick: chambered, then driven out), the
+        // back leg planted.
+        const legR = 0.5 + 0.5 * kr, chamber = ease(f.t / 0.06) * (1 - s);
+        const [bt, bs] = restIK('l', T.low * (1 - clamp01(chamber + s)));
+        T.legs = { l: [bt + legR * (chamber * 1.5 + s * 1.75), bs + legR * (-chamber * 1.3 + s * 1.65), legR * s * 0.9] };
+        T.pitch = kr * s * 0.5;
+        T.larmU = -0.65 - kr * s * 0.55; T.larmL = 1.15 - kr * s * 0.75;
+        T.rarmU = -1 - kr * s * 0.9; T.rarmL = 0.95 - kr * s * 1.7;
+        T.head = -kr * s * 0.25;   // the head stays up as the body leans back
       } else if (pose === 'roundhouse') {
-        if (isFloating) {
-          T.pitch = s * 0.45; T.fwd = s * 22; T.head = s * 0.2;
-          T.rarmU = -0.6 - s * 0.4; T.rarmL = 0.7;
-        } else {
-          const legR = 0.5 + 0.5 * kr, chamber = ease(f.t / 0.08) * (1 - s);
-          const [bt, bs] = restIK('r', T.low * (1 - clamp01(chamber + s)));
-          T.legs = { r: [bt + legR * (chamber * 1.65 + s * 2.1), bs + legR * (-chamber * 1.1 + s * 1.9), legR * s * 1.0] };
-          T.pitch = kr * s * 0.6; T.fwd = s * 4;
-          T.larmU = -0.65 - kr * s * 0.7; T.larmL = 1.15 - kr * s * 0.9;
-          T.rarmU = -1 - kr * s * 1.0; T.rarmL = 0.95 - kr * s * 1.8;
-          T.head = -kr * s * 0.3;
-        }
+        // The rear leg swung round and up, high, the body turning into it and leaning back.
+        const legR = 0.5 + 0.5 * kr, chamber = ease(f.t / 0.08) * (1 - s);
+        const [bt, bs] = restIK('r', T.low * (1 - clamp01(chamber + s)));
+        T.legs = { r: [bt + legR * (chamber * 1.65 + s * 2.1), bs + legR * (-chamber * 1.1 + s * 1.9), legR * s * 1.0] };
+        T.pitch = kr * s * 0.6; T.fwd = s * 4;
+        T.larmU = -0.65 - kr * s * 0.7; T.larmL = 1.15 - kr * s * 0.9;
+        T.rarmU = -1 - kr * s * 1.0; T.rarmL = 0.95 - kr * s * 1.8;
+        T.head = -kr * s * 0.3;
       } else if (pose === 'spin') {
         // The helix spin: both paddles straight out, and the whole body whirling twice round
         // on the spot, leaning into it, the head tucked.
@@ -218,20 +233,16 @@
         T.spin = 2 * 2 * Math.PI * u;
         T.pitch = 0.15 * wind; T.head = 0.35 * wind; T.bend = 6 * wind;
       } else if (pose === 'lowkick') {
-        if (isFloating) {
-          T.low = 1; T.pitch = 0.42 * s; T.fwd = s * 14;
-        } else {
-          // From the deep crouch, the back leg sweeps out along the floor.
-          T.low = 1;
-          const [bt, bs] = restIK('r');
-          T.legs = { r: [bt + kr * s * (1.1 - bt), bs + kr * s * (1.45 - bs), bs + kr * s * (1.4 - bs)] };
-          T.pitch = 0.05 + kr * s * 0.05;
-          T.larmU = -0.3; T.rarmU = -0.4; T.larmL = 1.5; T.rarmL = 1.45;
-        }
+        // From the deep crouch, the back leg sweeps out along the floor.
+        T.low = 1;
+        const [bt, bs] = restIK('r');
+        T.legs = { r: [bt + kr * s * (1.1 - bt), bs + kr * s * (1.45 - bs), bs + kr * s * (1.4 - bs)] };
+        T.pitch = 0.05 + kr * s * 0.05;
+        T.larmU = -0.3; T.rarmU = -0.4; T.larmL = 1.5; T.rarmL = 1.45;
       } else if (pose === 'airkick') {
         // From the tuck, stamp the back leg down and forward.
         airLegs();
-        if (!isFloating && T.legs?.r) T.legs.r = [0.45 + kr * s * 0.3, -1.2 + kr * s * 2.1, kr * s * 0.9];
+        T.legs.r = [0.45 + kr * s * 0.3, -1.2 + kr * s * 2.1, kr * s * 0.9];
         T.pitch = kr * s * 0.35;
         T.larmU = -0.3; T.rarmU = -1.2;
       } else if (pose === 'roll') {
@@ -252,29 +263,6 @@
         // the wave goes out, the torso leaning into it, then back up.
         T.low = 0.55 * s; T.pitch = 0.45 * s; T.fwd = 6 * s; T.head = 0.2 * s;
         T.larmU = T.rarmU = -0.65 + 0.85 * s; T.larmL = T.rarmL = 1.1 * (1 - s);
-      } else if (pose === 'barrel_trap') {
-        // GFP: opens its fluorescent beta-barrel cavity with a vacuum pull
-        const u = f.t / (MOVES.barrel_trap?.duration || 1.1), pull = ease(Math.min(u / 0.22, 1));
-        T.pitch = -0.22 * pull;
-        T.fwd = 14 * pull;
-        T.rarmU = -0.3; T.rarmL = 0.6;
-        T.head = -0.15;
-      } else if (pose === 'allosteric_clench') {
-        // Hemoglobin: allosteric T->R clamp snapping shut
-        const u = f.t / (MOVES.allosteric_clench?.duration || 0.9), clampP = ease(Math.min(u / 0.2, 1));
-        T.pitch = 0.3 * clampP;
-        T.fwd = 15 * clampP;
-        T.rarmU = -0.5; T.rarmL = 1.1;
-      } else if (pose === 'condensate_trap') {
-        // FUS: liquid phase separation droplet wobble
-        const u = f.t / (MOVES.condensate_trap?.duration || 1.15);
-        T.pitch = Math.sin(u * Math.PI * 8) * 0.22;
-        T.fwd = 10 * ease(Math.min(u / 0.25, 1));
-      } else if (pose === 'catalytic_surge') {
-        // Catalytic surge: charges up and discharges radial energy
-        const u = f.t / (MOVES.catalytic_surge?.duration || 0.85);
-        T.pitch = -0.25 * ease(Math.min(u / 0.15, 1));
-        T.fwd = 6;
       } else if (pose === 'throw') {
         // Reach out with both arms, take hold, heave up and over the head, and follow
         // through: the torso leans back under the weight, then forward as it lets go.
@@ -301,17 +289,6 @@
           T.pitch = f.tumble; T.larmU = T.rarmU = -2.2; T.larmL = T.rarmL = 0.1; T.head = 0.2;
           T.legs = { l: [0.9, -1.0, 0.2], r: [-0.4, -1.4, 0.3] };
         }
-      } else if (pose === 'trapped') {
-        // Trapped inside a custom protein cavity (e.g. GFP beta-barrel, allosteric clamp, or droplet)
-        const g = f.heldProg || 0;
-        const shiv = Math.sin(env.clock * 32) * (0.3 + 0.4 * g);
-        T.pitch = shiv;
-        T.larmU = T.rarmU = -0.5 + shiv * 0.4;
-        T.larmL = T.rarmL = 1.4;
-        T.head = shiv * 0.5;
-        T.low = 0.6;
-        T.bend = 12 * Math.sin(env.clock * 28);
-        T.legs = { l: [-0.4, 0.8, 0], r: [-0.4, 0.8, 0] };
       } else if (pose === 'block') {
         // The guard: both forearms pulled in tight over the head, the head tucked down
         // behind them, and standing, the front knee brought up to cover the body, as a
@@ -389,8 +366,8 @@
       let best = 0, bestErr = Infinity;
       for (let i = 0; i < SAMPLES; i++) {
         const u = i / SAMPLES;
-        const err = Math.abs(M.feet.l.x - (hx + fc * walkAt(u).dz * scale))
-          + Math.abs(M.feet.r.x - (hx + fc * walkAt(u + 0.5).dz * scale));
+        const err = Math.abs(M.feet.l.x - (hx + fc * walkAt('l', u).dz * scale))
+          + Math.abs(M.feet.r.x - (hx + fc * walkAt('r', u + 0.5).dz * scale));
         if (err < bestErr) { bestErr = err; best = u; }
       }
       M.phase = best;
@@ -401,13 +378,7 @@
       const M = stateOf(f), dt = env.dt, T = poseOf(f, env), w = T.omega, air = f.y > 0, fc = f.facing;
 
       // 1. The pose, on springs.
-      let pitch = spring(M, 'pitch', T.pitch, w, dt);
-      if (isFloating) {
-        // Floating hover sway & banking into movement
-        const bank = clamp((f.vx * fc) / 220, -0.3, 0.3);
-        const idleSway = Math.sin(env.clock * 2.0 + f.seed) * 0.05;
-        pitch += (air ? -0.2 * clamp(f.vx * fc / 200, -1, 1) : bank) + idleSway;
-      }
+      const pitch = spring(M, 'pitch', T.pitch, w, dt);
       const fwd = spring(M, 'fwd', T.fwd, w, dt);
       const low = clamp01(spring(M, 'low', T.low, Math.min(w, 26), dt));
       const bend = spring(M, 'bend', T.bend, 55, dt);
@@ -441,7 +412,7 @@
       M.walking = walking;
       // The cycle advances with ground covered, and runs backward walking backward.
       if (walking) M.phase = wrap(M.phase + dx * fc / stride);
-      const gl = walkAt(M.phase), gr = walkAt(M.phase + 0.5);
+      const gl = walkAt('l', M.phase), gr = walkAt('r', M.phase + 0.5);
       // A damaged leg limps: its step is shorter and lower, and the hips drop onto it while
       // it bears the weight, so the gait rocks to the bad side. The step scale is per leg;
       // the height and the drop are read below where the foot is placed.
@@ -451,7 +422,7 @@
       // Walking, the hips ride where the dance holds them, over whichever foot is lower (so a
       // sole always meets the floor and the hips rise and fall through the stride), sunk by
       // the slump; standing, at the stance's height for its depth, less any knee bend.
-      const walkHip = FLOOR - Math.min(gl.sole, gr.sole);
+      const walkHip = FLOOR - Math.min(gl.sole + hipOff('l'), gr.sole + hipOff('r'));   // the pelvis, over whichever foot is lower, each below its own hip
       // The body has weight: the hips dip as each heel lands and the weight comes onto
       // it, and ride up again over the standing leg, twice a stride. A dip only, never a
       // rise, so the standing leg is never asked to reach further than it is long.
@@ -459,27 +430,14 @@
       // Lying on its side for the barrel roll, the barrel's centre (15 Å up the body from the
       // pelvis, and 6 forward of it) sits a barrel's radius above the membrane; the pelvis
       // follows from that.
-      let hipTarget;
-      if (isFloating) {
-        // Floating hover height: hover smoothly at torso chest height ~75 Å
-        const floatBob = Math.sin(env.clock * 2.8 + f.seed) * 3.5;
-        const crouchDrop = f.crouch ? 16 : 0;
-        hipTarget = (air ? f.y : 0) + 52 - crouchDrop + floatBob;
-      } else {
-        hipTarget = T.tuck ? lerp(ANKLE_Y + hipHeight(0), ROLL_CENTRE - TORSO_UP, T.tuck) : air ? ANKLE_Y + hipHeight(0)
-          : walking ? walkHip - (hipHeight(0) - hipHeight(low)) - hipDrop - bob
-          : ANKLE_Y + hipHeight(low) - bend - hipDrop;
-      }
-      const hy = (air ? f.y : 0) + spring(M, 'hipY', hipTarget, air ? 20 : (isFloating ? 45 : 60), dt);
+      const hipTarget = T.tuck ? lerp(ANKLE_Y + hipHeight(0), ROLL_CENTRE - TORSO_UP, T.tuck) : air ? ANKLE_Y + hipHeight(0)
+        : walking ? walkHip - (hipHeight(0) - hipHeight(low)) - hipDrop - bob
+        : ANKLE_Y + hipHeight(low) - bend - hipDrop;
+      const hy = (air ? f.y : 0) + spring(M, 'hipY', hipTarget, air ? 20 : 60, dt);
       const skid = !air && Math.abs(f.vx) > SKID;
 
       // 3. The feet.
-      if (isFloating) {
-        for (const side of SIDES) {
-          const F = M.feet[side];
-          F.x = hx; F.lift = 0; F.free = true; F.swinging = F.walkSwing = false; F.walkY = null;
-        }
-      } else for (const side of SIDES) {
+      for (const side of SIDES) {
         const F = M.feet[side], other = M.feet[side === 'l' ? 'r' : 'l'];
         const rest = hx + fc * restFwd(side, low);
         F.walkY = null;
@@ -502,7 +460,7 @@
             const through = swingThrough(u), done = dx * fc >= 0 ? through : 1 - through;
             F.x = there + F.gap * (1 - ease(done));
           }
-          F.walkY = walkHip + g.dy - (walkHip + g.dy - ANKLE_Y) * 0.5 * legD[side];   // the dance's ankle height: heel strike, roll, toe-off, swing; a bad leg barely lifts
+          F.walkY = walkHip + hipOff(side) + g.dy - (walkHip + hipOff(side) + g.dy - ANKLE_Y) * 0.5 * legD[side];   // the dance's ankle height below this leg's own hip: heel strike, roll, toe-off, swing; a bad leg barely lifts
           F.walkPitch = g.pitch;
           F.lift = F.walkY - ANKLE_Y;
           continue;
@@ -527,7 +485,7 @@
       for (const side of SIDES) {
         const F = M.feet[side], g = side + 'leg', Q = posed[side];
         const ankleY = F.walkY ?? (ANKLE_Y + toeRaise(side, low) + F.lift);
-        const dzA = (F.x - hx) * fc, dyA = ankleY - hy;
+        const dzA = (F.x - hx) * fc, dyA = ankleY - (hy + hipOff(side));   // from this leg's own hip, which a lopsided body hangs off the pelvis
         M.stretch[side] = Math.hypot(dzA, dyA) / LEG_LEN;   // 1 = fully straight (for inspection)
         let [t, s] = legIK(g, dzA, dyA);
         // Walking, the foot turns as the dance turns it; standing, it is flat on the floor,

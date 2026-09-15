@@ -626,6 +626,13 @@
       rendering: { width: presetWidth * RIBBON_WIDTH, ortho: 0.4, detail: +(new URLSearchParams(location.search).get("detail") || 3), gpuDirect: true },
     });
     applyColour();
+    // The fold is reassigned at most every third draw. py2Dmol caches the assignment
+    // against the coordinates, and a fighter moves every frame, so it missed every time:
+    // 1.9 ms a draw of a 1,068-residue fight, the largest single item left in a frame.
+    // What changes the fold here is damage, which unfolds a residue over several frames
+    // (f.soft eases a fifth of the way a tick), so a third of a tenth of a second behind
+    // is not visible; a fighter swapped or a round reset rebuilds the viewer anyway.
+    viewer.cartoonSecEvery = 3;
     // No ground of its own: the page's floor sits behind the proteins, not over them.
     viewer.setClearColor(true);
     // py2Dmol's fast path: a frame whose secondary structure is unchanged updates the

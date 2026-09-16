@@ -853,7 +853,17 @@
   }
 
   // button: the one way on (resume, next round), or none to offer a choice of mode.
+  // 🔴 SOME OF THE HOST'S WORDS ARE ONLY THE HOST'S. The guest draws the host's overlay
+  // as it is sent, which is right for everything the two share - PAUSED, the round's end,
+  // a knockout - and wrong for the ones written from the host's side of the link: SCAN TO
+  // JOIN, which a guest has plainly already done, and CHALLENGER LEFT, which tells the
+  // challenger it has left. It is up on the host during exactly the seconds a dropped
+  // guest is finding its way back, so it was reaching a guest that had come back to read
+  // that it was gone. Flagged here, and a guest shows nothing in its place: the fight is
+  // resuming and there is nothing for it to do.
+  let hostOnly = false;
   function overlay(title, msg, button) {
+    hostOnly = false;
     $('qr').hidden = true; $('joinbox').hidden = true;   // only the REMOTE code shows these
     $('title').textContent = title; $('title').hidden = !title;
     $('msg').textContent = msg; $('msg').hidden = !msg;
@@ -2277,6 +2287,7 @@
         ms: $('msg').hidden ? '' : $('msg').textContent,
         btn: $('go').hidden ? '' : $('go').textContent,
         end: $('overlay').classList.contains('ended'),
+        mine: hostOnly,   // the host's own words, not the guest's to read
       },
       ev: net.events,
     };
@@ -2318,16 +2329,17 @@
     } else if (phase === 'playing' && was === 'paused') {
       startMusic();
     }
-    $('title').textContent = h.ov.ti; $('title').hidden = !h.ov.ti;
-    $('msg').textContent = h.ov.ms; $('msg').hidden = !h.ov.ms;
+    const mine = !!h.ov.mine;   // written from the host's side: not for the guest to read
+    $('title').textContent = mine ? '' : h.ov.ti; $('title').hidden = mine || !h.ov.ti;
+    $('msg').textContent = mine ? '' : h.ov.ms; $('msg').hidden = mine || !h.ov.ms;
     // Between rounds and at a match's end the host refolds or starts again; the guest
     // has no button for it, only a word that the host will, so nothing invites a click
     // that does nothing. RESUME it keeps (a request to the host). The menu is the host's alone.
-    const btn = !net.watch && h.ov.btn === 'RESUME' ? 'RESUME' : '';
+    const btn = !mine && !net.watch && h.ov.btn === 'RESUME' ? 'RESUME' : '';
     $('go').textContent = btn; $('go').hidden = !btn;
-    if (h.ov.on && phase === 'over' && !h.ov.ms) { $('msg').textContent = 'the host refolds'; $('msg').hidden = false; }
+    if (!mine && h.ov.on && phase === 'over' && !h.ov.ms) { $('msg').textContent = 'the host refolds'; $('msg').hidden = false; }
     $('modes').hidden = true;
-    $('overlay').hidden = !h.ov.on; $('overlay').classList.toggle('ended', h.ov.end);
+    $('overlay').hidden = mine || !h.ov.on; $('overlay').classList.toggle('ended', !mine && h.ov.end);
   }
   // A guest's keys act here at once and go to the host: strikes as presses, directions
   // as held or released. The guest is always P2.
@@ -2359,7 +2371,7 @@
     overlay('REMOTE', 'Getting a code…', null);
     $('modes').hidden = true; $('qr').hidden = false; $('qr').innerHTML = '';
     net.link = window.Net.host({
-      onLink: link => { $('msg').textContent = 'scan, or send the link'; $('joinlink').value = link; $('joinbox').hidden = false; if (!window.Net.showQR($('qr'), link)) $('qr').hidden = true; $('title').textContent = 'SCAN TO JOIN'; },
+      onLink: link => { $('msg').textContent = 'scan, or send the link'; $('joinlink').value = link; $('joinbox').hidden = false; if (!window.Net.showQR($('qr'), link)) $('qr').hidden = true; $('title').textContent = 'SCAN TO JOIN'; hostOnly = true; },
       // The challenger is in: a fresh match, or, back after a drop, the match resumes where
       // it stopped (the reset the newcomer gets rebuilds its fighters; the packets set them).
       onGuest: () => {
@@ -2372,7 +2384,7 @@
       onWatcher: n => { net.watchers = n; },
       onPing: rtt => { net.rtt = rtt; },
       onInput: hostInput,
-      onClose: () => { held[1].clear(); net.dropped = true; if (phase === 'playing') { phase = 'paused'; duckMusic(0.08); } overlay('CHALLENGER LEFT', 'waiting for them to come back; the same link works', 'MENU'); $('go').onclick = () => { $('go').onclick = () => start(); window.Net.stop(); net.link = null; net.dropped = false; phase = 'ready'; mode = 1; overlay('', '', null); }; },
+      onClose: () => { held[1].clear(); net.dropped = true; if (phase === 'playing') { phase = 'paused'; duckMusic(0.08); } overlay('CHALLENGER LEFT', 'waiting for them to come back; the same link works', 'MENU'); hostOnly = true; $('go').onclick = () => { $('go').onclick = () => start(); window.Net.stop(); net.link = null; net.dropped = false; phase = 'ready'; mode = 1; overlay('', '', null); }; },
       onError: msg => { window.Net.stop(); net.link = null; mode = 3; overlay('NO CONNECTION', msg, null); },
     });
     if (!net.link) { $('modes').hidden = false; $('qr').hidden = true; }

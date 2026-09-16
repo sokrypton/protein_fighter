@@ -94,26 +94,41 @@ async function solo() {
 }
 
 async function pair() {
-  launch(DEV); launch(DEV + 1);
+  launch(DEV); launch(DEV + 1); launch(DEV + 2);
   const host = await tab(DEV), guest = await tab(DEV + 1);
   await host.send('Page.navigate', { url: `http://localhost:${HTTP}/index.html${relay ? '?relay=1' : ''}` }); await sleep(4000);
-  // A CUSTOM FIGHTER BEFORE ANYONE HAS JOINED. It is the largest thing the host ever
-  // says, it goes out the moment a newcomer arrives - when the channel is at its busiest
-  // - and it is said once. Dropped, the guest holds a built-in body while the host
-  // fights a protein, and nothing on either screen says why.
-  await host.ev(`document.querySelector('[data-pick="1:custom1"]').click(); 'x'`); await sleep(300);
-  await host.ev(`(async () => { const text = await (await fetch('tests/structures/gfp.pdb')).text();
-    const dt = new DataTransfer(); dt.items.add(new File([text], 'gfp.pdb'));
-    document.getElementById('drop-zone').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); return 'dropped'; })()`);
-  for (let i = 0; i < 60 && (await host.ev(`document.getElementById('btn-load-custom').hidden`)); i++) await sleep(250);
-  await host.ev(`document.getElementById('btn-load-custom').click(); 'x'`); await sleep(1500);
-  check(await host.ev(`!!window.proteinFighter.forms.custom1`), 'the host loaded a custom fighter before hosting');
   await host.ev(`document.querySelector('[data-players="3"]').click(); document.getElementById('one').click(); 'hosting'`);
   let link = '';
   for (let i = 0; i < 50 && !link.startsWith('http'); i++) { await sleep(500); link = await host.ev(`document.getElementById('joinlink').value`); }
   check(link.startsWith('http'), 'the host got a join link: ' + link);
   check(await host.ev(`!!document.querySelector('#qr img')`), 'and drew it as a QR code');
   if (!link.startsWith('http')) return;
+  // SOME OF THE HOST'S WORDS ARE ONLY THE HOST'S. A watcher may arrive before any
+  // challenger, while SCAN TO JOIN is up, and the other side draws the host's overlay as
+  // it is sent - so someone who had plainly just joined was being told to join.
+  const early = await tab(DEV + 2);
+  await early.send('Page.navigate', { url: link.replace(/^https?:\/\/[^/]+/, `http://localhost:${HTTP}`) + '&watch=1' + (relay ? '&relay=1' : '') });
+  let ew = { rx: 0 }; const seen = new Set();
+  for (let i = 0; i < 24; i++) { await sleep(400);
+    ew = JSON.parse(await early.ev(`JSON.stringify({ t: document.getElementById('title').textContent,
+      shown: !document.getElementById('overlay').hidden, rx: window.proteinFighter ? window.proteinFighter.net.rx : 0 })`));
+    seen.add(ew.t);   // the words themselves, shown or not: they should never arrive
+    if (ew.rx > 4) break; }
+  check(ew.rx > 0, 'a watcher can join before any challenger has');
+  check(!seen.has('SCAN TO JOIN'), `and is never told to scan a code it came in by (${JSON.stringify([...seen])})`);
+  await early.send('Page.navigate', { url: 'about:blank' });   // its seat is given up, so the count below is the later watcher's alone
+  await sleep(1500); early.ws.close();
+  // A CUSTOM FIGHTER BEFORE THE CHALLENGER ARRIVES. It is the largest thing the host ever
+  // says, it goes out the moment a newcomer joins - when the channel is at its busiest -
+  // and it is said once. Dropped, the guest holds a built-in body while the host fights a
+  // protein, and nothing on either screen says why.
+  await host.ev(`document.querySelector('[data-pick="1:custom1"]').click(); 'x'`); await sleep(300);
+  await host.ev(`(async () => { const text = await (await fetch('tests/structures/gfp.pdb')).text();
+    const dt = new DataTransfer(); dt.items.add(new File([text], 'gfp.pdb'));
+    document.getElementById('drop-zone').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); return 'dropped'; })()`);
+  for (let i = 0; i < 60 && (await host.ev(`document.getElementById('btn-load-custom').hidden`)); i++) await sleep(250);
+  await host.ev(`document.getElementById('btn-load-custom').click(); 'x'`); await sleep(1500);
+  check(await host.ev(`!!window.proteinFighter.forms.custom1`), 'the host loaded a custom fighter before the challenger arrived');
   await guest.send('Page.navigate', { url: link.replace(/^https?:\/\/[^/]+/, `http://localhost:${HTTP}`) + (relay ? '&relay=1' : '') });
   let hs = {}; for (let i = 0; i < 30 && hs.phase !== 'playing'; i++) { await sleep(500); hs = JSON.parse(await state(host)); }
   check(hs.mode === 3 && hs.phase === 'playing', 'the fight started on the host when the guest connected');
@@ -166,7 +181,8 @@ async function pair() {
   check(back, 'the host reconnected to the signaling server under the same id');
   const watcher = await tab(DEV + 1);
   await watcher.send('Page.navigate', { url: link.replace(/^https?:\/\/[^/]+/, `http://localhost:${HTTP}`) + '&watch=1' }); await sleep(7000);
-  check(await host.ev(`window.proteinFighter.net.watchers === 1`), 'a watcher joined on the same link afterwards');
+  const seats = await host.ev(`window.proteinFighter.net.watchers`);   // an earlier watcher's seat may not have been given up yet
+  check(seats >= 1, `a watcher joined on the same link afterwards (${seats} watching)`);
   // THE GUEST'S CHANNEL DIES MID-FIGHT, as a phone changing network does. It comes back
   // on its own after three seconds - and takes its seat straight back, which needs the
   // host to know a returning challenger from a second one: the old channel still reads

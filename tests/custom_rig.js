@@ -146,6 +146,16 @@ for (const [file, want] of FILES) {
   // ...and the same pair gives a file's confidence back. Asked of the file as it is: the
   // block matrix above is a deliberate contradiction - two interleaved halves 24 A apart
   // while every residue stays locally certain - and no single structure can hold both.
+  // A PDB id may name the chains to keep after its four characters (1TIMA, 1TIM_AB), so
+  // one copy of a crystal structure's several can be fought on its own.
+  { const two = 'REMARK ALPHAFOLD\n' + fs.readFileSync(path.join(ROOT, 'tests/structures/hemoglobin_alpha.pdb'), 'utf8').split('\n').filter(l => l.startsWith('ATOM')).map((l, i) => l.slice(0, 21) + (i < 500 ? 'A' : 'B') + l.slice(22)).join('\n') + '\nEND\n';
+    const whole = C.caTrace(two), a = C.caTrace(C.keepChains(two, ['A'])), b = C.caTrace(C.keepChains(two, ['B']));
+    check(new Set(whole.chains).size === 2, `the file has two chains (${[...new Set(whole.chains)].join('')})`);
+    check(a.coords.length + b.coords.length === whole.coords.length && a.coords.length > 0 && b.coords.length > 0,
+      `each chain comes out on its own (${a.coords.length} + ${b.coords.length} of ${whole.coords.length})`);
+    check(new Set(a.chains).size === 1 && a.chains[0] === 'A', 'and it is the chain that was asked for');
+    check(C.keepChains(two, ['Z']) === '', 'a chain the file does not have comes back empty'); }
+
   // The confidence travels as itself, a byte a residue, so it comes back exactly as the
   // file gave it (to the rounding) and a grown limb reads 100.
   { const plain = results['tests/structures/gfp.pdb'], filePlddt = C.caTrace(gfpText).plddts;

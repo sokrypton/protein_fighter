@@ -2,7 +2,11 @@
 <html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- No pinch or double-tap zoom: the game is laid out to the viewport and a zoomed
+     page scrolls the HUD and the confidence map off the screen. maximum-scale and
+     user-scalable cover Android; iOS ignores both, so the gesture events are refused
+     below. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Protein Fighter</title>
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <!-- Added to a phone's home screen it opens full screen, on its side: the manifest for
@@ -29,8 +33,10 @@
     --cap-edge: #1d1b18; --glow: none; --ko: #c8102e; --ko-glow: #ffb3a8;
   }
   * { box-sizing: border-box; }
+  html { touch-action: manipulation; }   /* no double-tap zoom */
   body { margin: 0; height: 100vh; height: 100dvh; overflow: hidden; background: var(--bg); color: var(--ink);
-         font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+         font-family: ui-monospace, SFMono-Regular, Menlo, monospace; touch-action: manipulation;
+         overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
   /* Everything around the stage is sized from the screen: --u is a unit that grows with
      the viewport, kept within reason on a phone and on a big monitor. */
   .arena { position: relative; width: 100%; height: 100%;
@@ -315,7 +321,7 @@
   <div id="custom-modal" hidden>
     <div class="modal-card" id="drop-zone">
       <div class="fetch-row">
-        <input id="uniprot-input" placeholder="1UBQ, P69905, or drop a file" spellcheck="false" autocomplete="off" aria-label="PDB id or UniProt accession">
+        <input id="uniprot-input" placeholder="1UBQ, 1TIM_A, P69905, or drop a file" spellcheck="false" autocomplete="off" aria-label="PDB id, optionally with the chains to keep, or a UniProt accession">
         <button type="button" id="btn-fetch-af">FETCH</button>
         <button type="button" id="btn-browse">UPLOAD</button>
         <button type="button" id="btn-load-custom" hidden>FIGHT</button>

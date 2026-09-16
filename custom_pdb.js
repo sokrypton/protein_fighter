@@ -822,11 +822,57 @@
   // UniProt accession, from the AlphaFold DB. Both through py2Dmol's own fetch, which
   // knows the archives' URLs; an AlphaFold model also gets, from the DB's API, what it
   // is called and where its PAE is, the PAE through py2Dmol's reader.
+  // A PDB entry may name the chains to keep after its four characters: 1TIMA for one of
+  // them, 1TIM_AB or 1TIMAB for two. A crystal structure is often several copies of the
+  // same protein, and all of them at once make a fighter of one body wearing three
+  // others; naming a chain takes the one. Written as py2Dmol's own box takes it
+  // (1a3n_AB), and without the underscore too, which is what the hand types.
+  const PDB_CHAINS = /^([0-9][A-Z0-9]{3})[_]?([A-Z0-9]{1,8})?$/;
   async function fetchStructure(id) {
     const key = String(id || '').trim().toUpperCase();
     if (!key) throw new Error('a PDB id or a UniProt accession is needed');
+    const m = key.length > 4 && key.length <= 13 ? PDB_CHAINS.exec(key) : null;
+    if (m && m[2]) {
+      const entry = m[1], want = [...new Set(m[2].split(''))];
+      const text = keepChains(await window.py2Dmol.fetch(entry), want);
+      if (!text) throw new Error(`${entry} has no chain ${want.join(' or ')}`);
+      return { text, pae: null, id: key, name: key, title: `from the PDB, chain ${want.join('')}`, plddt: null, organism: '' };
+    }
     if (key.length === 4) return { text: await window.py2Dmol.fetch(key), pae: null, id: key, name: key, title: 'from the PDB', plddt: null, organism: '' };
     return fetchAlphaFold(key);
+  }
+  // The file with only those chains' atoms left in. Both formats are line-based and the
+  // chain is one column of each atom line, so this is a filter, not a parse: PDB puts it
+  // at column 22, mmCIF in the atom_site loop, whose field order the header gives.
+  function keepChains(text, want) {
+    const keep = new Set(want), lines = text.split('\n');
+    const isCif = lines.some(l => l.startsWith('_atom_site.'));
+    const out = [];
+    if (isCif) {
+      const cols = [];
+      for (const l of lines) if (l.startsWith('_atom_site.')) cols.push(l.trim().slice('_atom_site.'.length));
+      const at = ['auth_asym_id', 'label_asym_id'].map(c => cols.indexOf(c)).find(i => i >= 0);
+      if (at == null || at < 0) return text;
+      let hit = 0;
+      for (const l of lines) {
+        if (l.startsWith('ATOM ') || l.startsWith('HETATM')) {
+          const f = l.trim().split(/\s+/);
+          if (!keep.has((f[at] || '').toUpperCase())) continue;
+          hit++;
+        }
+        out.push(l);
+      }
+      return hit ? out.join('\n') : '';
+    }
+    let hit = 0;
+    for (const l of lines) {
+      if (l.startsWith('ATOM  ') || l.startsWith('HETATM')) {
+        if (!keep.has((l[21] || '').toUpperCase())) continue;
+        hit++;
+      }
+      out.push(l);
+    }
+    return hit ? out.join('\n') : '';
   }
   async function fetchAlphaFold(id) {
     const key = String(id || '').trim().toUpperCase();
@@ -841,7 +887,7 @@
     return { text, pae, id: key, name: e.gene || e.uniprotId || key, title: e.uniprotDescription || '', plddt: e.globalMetricValue, organism: e.organismScientificName || '' };
   }
 
-  const api = { caTrace, cutDoubtful, orient, findLimbs, assignRoles, chooseSpecial, buildCustomFighter, fetchStructure, fetchAlphaFold, SPECIALS, SMALL, MAX_RESIDUES };
+  const api = { caTrace, cutDoubtful, keepChains, orient, findLimbs, assignRoles, chooseSpecial, buildCustomFighter, fetchStructure, fetchAlphaFold, SPECIALS, SMALL, MAX_RESIDUES };
   if (typeof window !== 'undefined') window.CustomPdb = api;
   if (typeof module !== 'undefined') module.exports = api;
 })();

@@ -1828,6 +1828,15 @@
     held[i].delete(r[1]);
     if (r[1] === 'up' && fighters) fighters[i].upReleased = true;   // a tap is a short hop
   }
+  // 🔴 THE PAGE DOES NOT ZOOM. It is laid out to the viewport, so a pinch scrolls the
+  // HUD and the confidence map off the screen and there is no way back but a reload -
+  // which is what a thumb landing twice during a fight was doing. The viewport meta
+  // stops Android; iOS has ignored user-scalable since iOS 10 and pinches through its
+  // own gesture events, so those are refused here, along with any touch that arrives
+  // with a second finger already down. The preview's own drag to turn is one finger and
+  // is untouched, and py2Dmol handles what happens inside it.
+  for (const type of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(type, e => e.preventDefault(), { passive: false });
+  document.addEventListener('touchmove', e => { if (e.touches.length > 1) e.preventDefault(); }, { passive: false });
   const keyName = e => e.key.toLowerCase();
   // Keys typed into a field are the field's: 1, 2 and 3 are P2's punch, kick and block,
   // and w, a, s, d and the rest P1's, so a PDB id or an accession lost its digits and

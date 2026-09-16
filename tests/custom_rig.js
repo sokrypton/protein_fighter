@@ -61,15 +61,15 @@ for (const [file, want] of FILES) {
   if (want.roles) for (const r of want.roles) check(!!res.roles[r], `a ${r} is found`);
   const D = res.rigData.domain_indices;
   check(['lleg_thigh', 'lleg_shin', 'lleg_foot', 'rleg_thigh', 'rleg_shin', 'rleg_foot', 'torso'].every(k => D[k] && D[k].length), 'every leg part and the torso have residues');
-  check(res.rigData.n_ca === res.rigData.ca_xyz.length && res.rigData.base_plddt.length === res.rigData.n_ca, 'the rig data is consistent');
+  check(res.rigData.n_ca === res.rigData.ca_xyz.length && res.rigData.ref.length === res.rigData.n_ca, 'the rig data is consistent, a reference point for every residue');
   const { worst, minY, worstAt } = poseThrough(res);
   check(worst < 0.15, `posed through a punch, a kick and a walk, every bond within 0.15 Å (worst ${worst.toFixed(3)} at ${worstAt})`);
   check(minY > -3, `the legs stay on the floor (lowest ${minY.toFixed(1)})`);
 }
 // The same structure as PDB and as mmCIF gives the same fighter.
 { const a = results['tests/structures/gfp.pdb'], b = results['tests/structures/gfp.cif'];
-  const same = a.residues === b.residues && a.rigData.ca_xyz.every((p, i) => p.every((v, k) => Math.abs(v - b.rigData.ca_xyz[i][k]) < 1e-3)) && a.rigData.base_plddt.every((v, i) => Math.abs(v - b.rigData.base_plddt[i]) < 0.01);
-  check(same, 'GFP as PDB and as mmCIF give the same fighter, coordinate for coordinate and pLDDT for pLDDT'); }
+  const same = a.residues === b.residues && a.rigData.ca_xyz.every((p, i) => p.every((v, k) => Math.abs(v - b.rigData.ca_xyz[i][k]) < 1e-3)) && a.rigData.ref.every((p, i) => p.every((v, k) => Math.abs(v - b.rigData.ref[i][k]) < 1e-3));
+  check(same, 'GFP as PDB and as mmCIF give the same fighter, coordinate for coordinate and reference for reference'); }
 // Chain breaks: two chains, and a gap in one, are breaks the rig respects.
 { const two = fs.readFileSync(path.join(ROOT, 'tests/structures/hemoglobin_alpha.pdb'), 'utf8').split('\n').filter(l => l.startsWith('ATOM')).map((l, i) => l.slice(0, 21) + (i < 500 ? 'A' : 'B') + l.slice(22)).join('\n') + '\nEND\n';
   const t = C.caTrace('REMARK ALPHAFOLD\n' + two);
@@ -103,21 +103,30 @@ for (const [file, want] of FILES) {
   const pae = new Uint8Array(M * M);   // the flat map is Angstrom x 8, as py2Dmol gives it
   for (let i = 0; i < M; i++) for (let j = 0; j < M; j++) pae[i * M + j] = 8 * ((i < half) === (j < half) ? NEAR : FAR);
   const res = C.buildCustomFighter('two halves', gfpText, { pae });
-  check(!!res.ref && res.ref.length === res.totalResidues, `the model's error comes back as a reference structure (${res.ref ? res.ref.length : 0} points for ${res.totalResidues} residues)`);
+  check(!!res.rigData.ref && res.rigData.ref.length === res.totalResidues, `the model's error comes back as a reference structure (${res.rigData.ref ? res.rigData.ref.length : 0} points for ${res.totalResidues} residues)`);
   // a grown limb has no error of its own: its reference point IS its point
   const X = res.rigData.ca_xyz, grownIdx = [];
   for (const [, [from, to]] of Object.entries(res.grown)) for (let i = from - 1; i < to; i++) grownIdx.push(i);
-  const grownStill = grownIdx.every(i => Math.abs(X[i][0] - res.ref[i][0]) < 1e-6 && Math.abs(X[i][1] - res.ref[i][1]) < 1e-6 && Math.abs(X[i][2] - res.ref[i][2]) < 1e-6);
-  check(grownIdx.length > 0 && grownStill, `the ${grownIdx.length} grown residues sit on the model, so they carry no error`);
+  // a grown limb has nothing to doubt: its reference sits on the model, give or take what
+  // the backbone restraint and its doubtful neighbours drag it by, so it reads as certain
+  { const plain = results['tests/structures/gfp.pdb'], PX = plain.rigData.ca_xyz;
+    const gi = []; for (const [, [from, to]] of Object.entries(plain.grown)) for (let i = from - 1; i < to; i++) gi.push(i);
+    const pairs = window.LDDT.prepare(PX, null), got = new Float32Array(PX.length);
+    window.LDDT.score(pairs, plain.rigData.ref, got, PX);
+    let sum = 0, min = 100;
+    for (const i of gi) { const v = 100 * got[i]; sum += v; if (v < min) min = v; }
+    // the average, and a floor: where a grown limb meets a doubtful residue it is dragged
+    // a little, which is the neighbour's doubt and not the limb's
+    check(gi.length > 0 && sum / gi.length > 97 && min > 70, `the ${gi.length} grown residues read as certain (${(sum / gi.length).toFixed(1)} on average, lowest ${min.toFixed(0)})`); }
   // and the pair regenerates the map: near within a half, far between them
-  const own = []; res.rigData.base_plddt.forEach((v, i) => { if (v !== res.grownPlddt) own.push(i); });
+  const own = []; for (let i = 0; i < X.length; i++) if (!grownIdx.includes(i)) own.push(i);
   const frame = (P, i) => { const n = P.length, c = Math.min(n - 2, Math.max(1, i)), a = P[c - 1], o = P[c], b = P[c + 1];
     let x1 = b[0] - o[0], y1 = b[1] - o[1], z1 = b[2] - o[2]; let l = Math.hypot(x1, y1, z1) || 1; x1 /= l; y1 /= l; z1 /= l;
     let x2 = a[0] - o[0], y2 = a[1] - o[1], z2 = a[2] - o[2]; const d = x2 * x1 + y2 * y1 + z2 * z1; x2 -= d * x1; y2 -= d * y1; z2 -= d * z1;
     l = Math.hypot(x2, y2, z2) || 1; x2 /= l; y2 /= l; z2 /= l;
     return [o, [x1, y1, z1], [x2, y2, z2], [y1 * z2 - z1 * y2, z1 * x2 - x1 * z2, x1 * y2 - y1 * x2]]; };
-  const err = (i, j) => { const [o, e1, e2, e3] = frame(X, i), [q, f1, f2, f3] = frame(res.ref, i);
-    const p = X[j], r = res.ref[j];
+  const err = (i, j) => { const [o, e1, e2, e3] = frame(X, i), [q, f1, f2, f3] = frame(res.rigData.ref, i);
+    const p = X[j], r = res.rigData.ref[j];
     const vx = p[0] - o[0], vy = p[1] - o[1], vz = p[2] - o[2], wx = r[0] - q[0], wy = r[1] - q[1], wz = r[2] - q[2];
     const dx = (e1[0] * vx + e1[1] * vy + e1[2] * vz) - (f1[0] * wx + f1[1] * wy + f1[2] * wz);
     const dy = (e2[0] * vx + e2[1] * vy + e2[2] * vz) - (f2[0] * wx + f2[1] * wy + f2[2] * wz);
@@ -132,6 +141,29 @@ for (const [file, want] of FILES) {
   }
   within /= Math.max(1, wn); between /= Math.max(1, bn);
   check(within < NEAR + 4 && between > FAR / 2, `the pair regenerates the map: ${within.toFixed(1)} A within a half against ${NEAR}, ${between.toFixed(1)} A between them against ${FAR}`);
+  // ...and the same pair gives a file's confidence back. Asked of the file as it is: the
+  // block matrix above is a deliberate contradiction - two interleaved halves 24 A apart
+  // while every residue stays locally certain - and no single structure can hold both.
+  { const plain = results['tests/structures/gfp.pdb'], filePlddt = C.caTrace(gfpText).plddts;
+    const PX = plain.rigData.ca_xyz, grown2 = new Set();
+    for (const [, [from, to]] of Object.entries(plain.grown)) for (let i = from - 1; i < to; i++) grown2.add(i);
+    const ownPlain = []; for (let i = 0; i < PX.length; i++) if (!grown2.has(i)) ownPlain.push(i);
+    const pairs = window.LDDT.prepare(PX, null), got = new Float32Array(PX.length);
+    window.LDDT.score(pairs, plain.rigData.ref, got, PX);
+    let err = 0, k = 0;
+    for (let i = 0; i < Math.min(ownPlain.length, filePlddt.length); i++) { err += Math.abs(filePlddt[i] - 100 * got[ownPlain[i]]); k++; }
+    check(err / k < 6, `the file's confidence is read back off the pair: ${(err / k).toFixed(1)} points out over ${k} residues`); }
+  // ...and it is still a chain: every bond within a tenth of an Angstrom of the model's,
+  // and nothing stitched across a chain break
+  { const breaks = new Set(res.rigData.chain_breaks || []);
+    let worstBond = 0;
+    for (let i = 0; i < X.length - 1; i++) {
+      if (breaks.has(i)) continue;
+      const a = Math.hypot(X[i][0] - X[i + 1][0], X[i][1] - X[i + 1][1], X[i][2] - X[i + 1][2]);
+      const b = Math.hypot(res.rigData.ref[i][0] - res.rigData.ref[i + 1][0], res.rigData.ref[i][1] - res.rigData.ref[i + 1][1], res.rigData.ref[i][2] - res.rigData.ref[i + 1][2]);
+      worstBond = Math.max(worstBond, Math.abs(a - b));
+    }
+    check(worstBond < 1.5, `the reference is still a chain: every bond within ${worstBond.toFixed(2)} A of the model's`); }
 }
 console.log(failures ? `${failures} failure(s)` : 'ok');
 process.exit(failures ? 1 : 0);

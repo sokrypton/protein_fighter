@@ -110,8 +110,20 @@
     // live map is drawn over, since standing still does not make that error go away.
     // It replaces an n x n matrix: 475 KB over a link for a 689-residue fighter, and up
     // to 9 MB to download, against three numbers a residue.
+    // ...and each residue's confidence, read off the same pair: the lDDT between the
+    // model and its reference IS the pLDDT the file carried (custom_pdb.js referenceFor
+    // sized the reference until it was). One structure, both quantities, and no
+    // predicted-versus-not branch: a structure with nothing to doubt has a reference that
+    // says so.
+    let basePlddt = null;
     let paeBase = null;
     const refXyz = data.ref;
+    if (refXyz && refXyz.length === n && window.LDDT) {
+      const pairs = window.LDDT.prepare(data.ca_xyz, null), got = new Float32Array(n);
+      window.LDDT.score(pairs, refXyz, got, data.ca_xyz);
+      basePlddt = new Float32Array(n);
+      for (let i = 0; i < n; i++) basePlddt[i] = Math.max(0, Math.min(100, 100 * got[i]));
+    }
     if (refXyz && refXyz.length === n) {
       paeBase = new Float32Array(pb * pb);
       const cnt = new Float32Array(pb * pb);
@@ -173,7 +185,7 @@
       // ...as a mask, and a running count, for the passes that ask per residue per iteration
       breakAt: Uint8Array.from({ length: n }, (_, i) => rig.chainBreaks.has(i) ? 1 : 0),
       breaksBefore: (() => { const c = new Int32Array(n + 1); for (let i = 0; i < n; i++) c[i + 1] = c[i] + (rig.chainBreaks.has(i) ? 1 : 0); return c; })(),
-      basePlddt: data.base_plddt ? Float32Array.from(data.base_plddt) : null,
+      basePlddt,
       group,
     };
   }
@@ -1884,12 +1896,21 @@
   // frames a second at CPU x4, against 4.3 without it). py2Dmol now holds a hidden
   // viewer's draws as well; this stops the spin that asked for them.
   function closeCustomModal() { $('custom-modal').hidden = true; if (preview) preview.autoRotate = false; }
+  // Each residue's confidence, read off the pair the rig carries (see makeForm).
+  const plddtOf = (rigData) => {
+    const X = rigData.ca_xyz, R = rigData.ref;
+    if (!R || R.length !== X.length || !window.LDDT) return X.map(() => 90);
+    const pairs = window.LDDT.prepare(X, null), got = new Float32Array(X.length);
+    window.LDDT.score(pairs, R, got, X);
+    return Array.from(got, v => Math.max(0, Math.min(100, 100 * v)));
+  };
   // The fighter as it will stand, in a viewer of its own in the card: the built body
   // (limbs grown, legs on the floor) with the model's own pLDDT, in the game's colours,
   // turning slowly until dragged. One viewer, made the first time and reloaded after.
   let preview = null;
   function previewText(res) {
-    const breaks = new Set(res.rigData.chain_breaks || []), pl = res.rigData.base_plddt || [];
+    const breaks = new Set(res.rigData.chain_breaks || []);
+    const pl = plddtOf(res.rigData);
     let s = '', num = 0;
     res.rigData.ca_xyz.forEach((q, i) => {
       num++;
@@ -1957,13 +1978,13 @@
   // ...as player i's form, custom0 or custom1: each player may have its own.
   function installCustom(spec, i) {
     const key = 'custom' + i;
-    FORMS[key] = makeForm(key, { ...spec.rigData, ref: spec.ref || null });
+    FORMS[key] = makeForm(key, spec.rigData);   // the rig carries its reference (custom_pdb.js referenceFor)
     FORMS[key].displayName = String(spec.name).toUpperCase();
     SPECIAL[key] = spec.special.special;
     customSpec[i] = spec;
     $('pick-custom-' + i).textContent = String(spec.name).toUpperCase().slice(0, 10);
   }
-  const customWire = spec => ({ name: spec.name, rigData: spec.rigData, special: spec.special, ref: spec.ref || null, roles: spec.roles, legsAdded: spec.legsAdded, residues: spec.residues, hasPlddt: spec.hasPlddt, meanPlddt: spec.meanPlddt });
+  const customWire = spec => ({ name: spec.name, rigData: spec.rigData, special: spec.special, roles: spec.roles, legsAdded: spec.legsAdded, residues: spec.residues, hasPlddt: spec.hasPlddt, meanPlddt: spec.meanPlddt });
   // No CANCEL: a click on the veil, or Escape, leaves the card.
   $('custom-modal').onclick = e => { if (e.target === $('custom-modal')) closeCustomModal(); };
 

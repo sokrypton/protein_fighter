@@ -61,6 +61,13 @@ const check = (ok, what) => { console.log((ok ? '  ok   ' : '  FAIL ') + what); 
   await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: mx + 96, y: my, button: 'left', clickCount: 1 }); await sleep(500);
   check(await ev(`window.proteinFighter.preview.autoRotate === false`), 'a drag turns it by hand and stops the spin');
   await ev(`document.getElementById('btn-load-custom').click(); 'x'`); await sleep(1500);
+  // the rig's reference is what carries confidence and the error floor, so a fighter that
+  // arrives without them is a fighter drawn flat: this is the check that was missing when
+  // the reference stopped reaching the form
+  const conf = JSON.parse(await ev(`JSON.stringify((() => { const F = window.proteinFighter.forms.custom1; const b = F.basePlddt ? Array.from(F.basePlddt) : null, f = F.paeBase ? Array.from(F.paeBase) : null;
+    const mm = a => a ? { min: +Math.min(...a).toFixed(1), max: +Math.max(...a).toFixed(1), mean: +(a.reduce((s, v) => s + v, 0) / a.length).toFixed(1) } : null;
+    return { plddt: mm(b), floor: mm(f) }; })())`));
+  check(!!conf.plddt && conf.plddt.min < 90 && conf.plddt.max > 95, `GFP's own confidence is read back off its reference (${conf.plddt ? conf.plddt.min + ' to ' + conf.plddt.max + ', mean ' + conf.plddt.mean : 'missing'})`);
   const form = JSON.parse(await ev(`JSON.stringify((() => { const G = window.proteinFighter, F = G.forms.custom1; return { n: F.n, special: G.SPECIAL.custom1, name: document.getElementById('name1').textContent }; })())`));
   check(form.n > 238 && form.special === 'spin' && /^GFP/.test(form.name), `P2 is ${form.name} with grown limbs (${form.n} residues), special ${form.special}`);
   // the fight: P1 walks in and strikes; P2 (the CPU, hard) fights back

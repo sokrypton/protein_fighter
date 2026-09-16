@@ -585,332 +585,39 @@
     for (let i = lim; i < n; i++) u[i] = [0, 0, 0];
     return u;
   }
-  // 🔴 AND IT IS FITTED TO WHAT THE GAME ACTUALLY READS, NOT TO A PROXY. Scaling fits
-  // |u_i - u_j| to the matrix, but the game does not read that: it reads the pair in
-  // residue i's OWN FRAME, and it reads the confidence as an lDDT. Fit the proxy and the
-  // two disagree - the reference's frames tilt where the displacement turns, and the
-  // wobble that buys a residue its confidence lands on top of an error already placed,
-  // so a doubtful model came back with its map 6 A light across the board.
-  //
-  // So the displacement is a free field of 3n numbers and the loss is the two readings
-  // themselves: (matrix - the frame reading) and (pLDDT - the lDDT), with a bond term to
-  // keep the backbone a backbone. Gradient descent (Adam, from the scaling solution),
-  // with the frames recomputed every step and the lDDT's four thresholds softened into
-  // sigmoids so it has a gradient at all. Both sides of a link run the same steps from
-  // the same start, so both build the same structure.
-  const FIT_ITERS = 150, FIT_LR = 0.05, CONF_WEIGHT = 2500, BOND_WEIGHT = 400, TAU = 0.25, PAE_CAP = 30, B1 = 0.9, B2 = 0.99, EPS_REL = 0.1, FIT_CAP = 0.35, BOND_TOL = 0.4, RECAL = 20, SETTLE = 15;
-  const frameAt = (P, i) => {
-    const n = P.length, c = Math.min(n - 2, Math.max(1, i)), a = P[c - 1], o = P[c], b = P[c + 1];
-    let x1 = b[0] - o[0], y1 = b[1] - o[1], z1 = b[2] - o[2];
-    let l = Math.hypot(x1, y1, z1) || 1; x1 /= l; y1 /= l; z1 /= l;
-    let x2 = a[0] - o[0], y2 = a[1] - o[1], z2 = a[2] - o[2];
-    const d = x2 * x1 + y2 * y1 + z2 * z1; x2 -= d * x1; y2 -= d * y1; z2 -= d * z1;
-    l = Math.hypot(x2, y2, z2) || 1; x2 /= l; y2 /= l; z2 /= l;
-    return [c, o, [x1, y1, z1], [x2, y2, z2], [y1 * z2 - z1 * y2, z1 * x2 - x1 * z2, x1 * y2 - y1 * x2]];
-  };
-  const FIT_ROWS = 96, COL_CAP = 384;   // the map is read off strided rows anyway, and every column of each
-  function fitReference(coords, ref, plddts, paeFlat, breaks, own) {
+  // 🔴 THE REFERENCE CARRIES THE ERROR, AND NOTHING ELSE. It used to carry the
+  // confidence too, wobbled per residue until the lDDT between the two structures read
+  // as the file's pLDDT, and a gradient fit reconciled that against the map. All of it
+  // was to send ONE thing - but pLDDT is one byte a residue and was never the problem.
+  // The matrix is: n by n, 475 KB over a link for a 689-residue fighter and up to 9 MB
+  // to download. So the confidence travels as itself, the reference carries the error
+  // alone, and what is left of it is the matrix inverted as a distance and laid on the
+  // model. With the doubtful stretches cut out (cutDoubtful) there is little left for it
+  // to get wrong: the regenerated map is 0.9 A of a 31.75 A scale on GFP, 0.9 on
+  // haemoglobin, 2.8 on the spike.
+  const KNIT_PASSES = 12;
+  function referenceFor(coords, paeFlat, breaks) {
     const n = coords.length;
-    const m = (paeFlat && paeFlat.length) ? Math.round(Math.sqrt(paeFlat.length)) : 0;
-    const lim = m ? Math.min(n, m) : 0;
-    const at = (i, j) => Math.min(PAE_CAP, (paeFlat[i * m + j] + paeFlat[j * m + i]) / 16);
-    // ...over the residues the matrix speaks for. A grown limb has no predicted error,
-    // only the convention that it has none, and made to read zero against every row it
-    // pulled the fit away from the pairs that carry data.
-    const pool = []; for (let i = 0; i < lim; i++) if (!own || own.has(i)) pool.push(i);
-    // ...and read at a spacing, not residue by residue. The map is drawn as sixty-four
-    // pixels a side and every pixel already averages a block of residues together, so a
-    // column every few residues says the same thing for a fraction of the work, and the
-    // fit stops costing more the bigger the protein is. Below the cap nothing is
-    // dropped; the spike's 1,274 residues fit in the time its 400th used to take.
-    const cstride = Math.max(1, Math.ceil(pool.length / COL_CAP));
-    const cols = Int32Array.from(pool.filter((_, k) => k % cstride === 0)), rows = [];
-    if (pool.length > 1) { const R = Math.min(pool.length, FIT_ROWS); for (let k = 0; k < R; k++) rows.push(pool[Math.round(k * (pool.length - 1) / Math.max(1, R - 1))]); }
-    const L = window.LDDT, pairs = (L && L.prepare) ? L.prepare(coords, null) : null;
-    const want = new Float64Array(n);
-    for (let i = 0; i < n; i++) want[i] = Math.max(0.2, Math.min(0.995, (plddts[i] ?? 90) / 100));
+    const u = (paeFlat && paeFlat.length) ? referenceFrom(coords, paeFlat) : null;
+    if (!u) return coords.map(p => [round3(p[0]), round3(p[1]), round3(p[2])]);
+    const ref = coords.map((p, i) => [p[0] + u[i][0], p[1] + u[i][1], p[2] + u[i][2]]);
+    // ...and it is still a chain. The scaling moves each residue on its own, which pulls
+    // consecutive alpha carbons off the 3.8 A a peptide bond holds them at, and every
+    // reading the game takes is in a frame built from a residue and its neighbours. Each
+    // bond is pulled back to the length the model itself has; a CHAIN BREAK IS NOT A
+    // BOND and is skipped, two chains being two chains.
     const rest = new Float64Array(Math.max(0, n - 1));
     for (let i = 0; i < n - 1; i++) rest[i] = dist3(coords[i], coords[i + 1]);
-    const wAE = (lim && rows.length) ? 1 / (rows.length * cols.length) : 0, wP = CONF_WEIGHT / n, wB = BOND_WEIGHT / n;
-    const lddt = new Float64Array(n), THR = [0.5, 1, 2, 4];
-    // The model's side of every reading never changes: each column in each row's frame,
-    // and the target, are taken once. Half the map term, gone.
-    const NC = cols.length, A = new Float32Array(rows.length * NC * 3), TGT = new Float32Array(rows.length * NC), RC = new Int32Array(rows.length);
-    for (let ri = 0; ri < rows.length; ri++) {
-      const a = rows[ri], [c, o, e1, e2, e3] = frameAt(coords, a); RC[ri] = c;
-      for (let cj = 0; cj < NC; cj++) {
-        const j = cols[cj], p = coords[j], vx = p[0] - o[0], vy = p[1] - o[1], vz = p[2] - o[2], k = (ri * NC + cj) * 3;
-        A[k] = e1[0] * vx + e1[1] * vy + e1[2] * vz; A[k + 1] = e2[0] * vx + e2[1] * vy + e2[2] * vz; A[k + 2] = e3[0] * vx + e3[1] * vy + e3[2] * vz;
-        TGT[ri * NC + cj] = at(a, j);
-      }
-    }
-    // The softened lDDT and its slope, tabled over the distance difference: four
-    // sigmoids a pair, twice a pass, were most of the fit on a large protein.
-    const TAB_STEP = 0.01, TAB_N = 1200, sTab = new Float32Array(TAB_N + 1), dTab = new Float32Array(TAB_N + 1);
-    for (let k = 0; k <= TAB_N; k++) {
-      const del = k * TAB_STEP; let sm = 0, ds = 0;
-      for (let t = 0; t < 4; t++) { const sg = 1 / (1 + Math.exp((del - THR[t]) / TAU)); sm += sg; ds -= sg * (1 - sg) / TAU; }
-      sTab[k] = sm; dTab[k] = ds;
-    }
-    const pairH = pairs ? new Float32Array(pairs.i.length) : null, dl = new Float64Array(n);
-    // 🔴 AND THE SOFTENED lDDT IS KEPT HONEST AGAINST THE REAL ONE. The four thresholds
-    // are counted with sigmoids so the score has a gradient, and a sigmoid is not a step:
-    // driven to the confidence the file states, the softened score lands where the real
-    // one reads something else - on a crystal structure, where nothing else is being
-    // fitted, ten points else. Every so often the real score is taken and the difference
-    // is carried as an offset, so what the fit is actually matching is the score the game
-    // will read.
-    const bias = new Float64Array(n), hard = new Float32Array(n);
-    // the loss at P, and its gradient into g when one is asked for
-    function evaluate(P, g) {
-      let loss = 0;
-      if (g) g.fill(0);
-      for (let ri = 0; ri < rows.length; ri++) {
-        const c = RC[ri];
-        // the reference's frame at this row, kept in pieces: the gradient goes back
-        // through every one of them
-        const pa = P[c - 1], po = P[c], pb = P[c + 1];
-        const pox = po[0], poy = po[1], poz = po[2];
-        let ux = pb[0] - pox, uy = pb[1] - poy, uz = pb[2] - poz;
-        const ul = Math.hypot(ux, uy, uz) || 1;
-        const f1x = ux / ul, f1y = uy / ul, f1z = uz / ul;
-        const px = pa[0] - pox, py = pa[1] - poy, pz = pa[2] - poz;
-        const pd = px * f1x + py * f1y + pz * f1z;
-        const qx = px - pd * f1x, qy = py - pd * f1y, qz = pz - pd * f1z;
-        const ql = Math.hypot(qx, qy, qz) || 1;
-        const f2x = qx / ql, f2y = qy / ql, f2z = qz / ql;
-        const f3x = f1y * f2z - f1z * f2y, f3y = f1z * f2x - f1x * f2z, f3z = f1x * f2y - f1y * f2x;
-        const c3 = c * 3, base = ri * NC;
-        let G1x = 0, G1y = 0, G1z = 0, G2x = 0, G2y = 0, G2z = 0, G3x = 0, G3y = 0, G3z = 0;
-        let gcx = 0, gcy = 0, gcz = 0;
-        for (let cj = 0; cj < NC; cj++) {
-          const j = cols[cj];
-          if (j === c) continue;
-          const r = P[j], k = (base + cj) * 3;
-          const wx = r[0] - pox, wy = r[1] - poy, wz = r[2] - poz;
-          const dx = A[k] - (f1x * wx + f1y * wy + f1z * wz);
-          const dy = A[k + 1] - (f2x * wx + f2y * wy + f2z * wz);
-          const dz = A[k + 2] - (f3x * wx + f3y * wy + f3z * wz);
-          const e = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6, resid = e - TGT[base + cj];
-          loss += wAE * resid * resid;
-          if (!g) continue;
-          const sc = 2 * wAE * resid / e;
-          // ...through the frame's axes, where the reading is taken
-          const gx = -sc * (f1x * dx + f2x * dy + f3x * dz);
-          const gy = -sc * (f1y * dx + f2y * dy + f3y * dz);
-          const gz = -sc * (f1z * dx + f2z * dy + f3z * dz);
-          const j3 = j * 3;
-          g[j3] += gx; g[j3 + 1] += gy; g[j3 + 2] += gz;
-          gcx += gx; gcy += gy; gcz += gz;
-          // ...and on to the axes themselves: a frame that turns moves every reading in
-          // its row, which is most of the loss and all of the reason a fit that held the
-          // frames still could not take a step
-          const s1 = -sc * dx, s2 = -sc * dy, s3 = -sc * dz;
-          G1x += s1 * wx; G1y += s1 * wy; G1z += s1 * wz;
-          G2x += s2 * wx; G2y += s2 * wy; G2z += s2 * wz;
-          G3x += s3 * wx; G3y += s3 * wy; G3z += s3 * wz;
-        }
-        if (!g) continue;
-        g[c3] -= gcx; g[c3 + 1] -= gcy; g[c3 + 2] -= gcz;
-        // x3 = x1 x x2
-        let A1x = G1x + (f2y * G3z - f2z * G3y), A1y = G1y + (f2z * G3x - f2x * G3z), A1z = G1z + (f2x * G3y - f2y * G3x);
-        const A2x = G2x + (G3y * f1z - G3z * f1y), A2y = G2y + (G3z * f1x - G3x * f1z), A2z = G2z + (G3x * f1y - G3y * f1x);
-        // x2 = q / |q|
-        const a2d = A2x * f2x + A2y * f2y + A2z * f2z;
-        const Qx = (A2x - a2d * f2x) / ql, Qy = (A2y - a2d * f2y) / ql, Qz = (A2z - a2d * f2z) / ql;
-        // q = p - (p.x1) x1
-        const qd = Qx * f1x + Qy * f1y + Qz * f1z;
-        const Px = Qx - qd * f1x, Py = Qy - qd * f1y, Pz = Qz - qd * f1z;
-        A1x -= qd * px + pd * Qx; A1y -= qd * py + pd * Qy; A1z -= qd * pz + pd * Qz;
-        // x1 = u / |u|
-        const a1d = A1x * f1x + A1y * f1y + A1z * f1z;
-        const Ux = (A1x - a1d * f1x) / ul, Uy = (A1y - a1d * f1y) / ul, Uz = (A1z - a1d * f1z) / ul;
-        const bm = (c + 1) * 3, am = (c - 1) * 3;
-        g[bm] += Ux; g[bm + 1] += Uy; g[bm + 2] += Uz;
-        g[am] += Px; g[am + 1] += Py; g[am + 2] += Pz;
-        g[c3] -= Ux + Px; g[c3 + 1] -= Uy + Py; g[c3 + 2] -= Uz + Pz;
-      }
-      if (pairs) {
-        const I = pairs.i, J = pairs.j, D = pairs.d, cnt = pairs.count, K = I.length;
-        lddt.fill(0);
-        for (let k = 0; k < K; k++) {
-          const a = P[I[k]], b = P[J[k]];
-          const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
-          const h = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-9; pairH[k] = h;
-          const del = Math.abs(h - D[k]), ti = del / TAB_STEP, t0 = ti | 0;
-          const sm = t0 >= TAB_N ? 0 : sTab[t0] + (sTab[t0 + 1] - sTab[t0]) * (ti - t0);
-          lddt[I[k]] += sm; lddt[J[k]] += sm;
-        }
-        for (let i = 0; i < n; i++) { lddt[i] = cnt[i] ? lddt[i] / (4 * cnt[i]) : 1; const r = lddt[i] - want[i] - bias[i]; loss += wP * r * r; }
-        if (g) {
-          // each residue's residual, scaled once
-          for (let i = 0; i < n; i++) dl[i] = cnt[i] ? 2 * wP * (lddt[i] - want[i] - bias[i]) / (4 * cnt[i]) : 0;
-          for (let k = 0; k < K; k++) {
-            const i = I[k], j = J[k], dLds = dl[i] + dl[j];
-            if (!dLds) continue;
-            const h = pairH[k], del = Math.abs(h - D[k]), ti = del / TAB_STEP, t0 = ti | 0;
-            if (t0 >= TAB_N) continue;
-            const ds = dTab[t0] + (dTab[t0 + 1] - dTab[t0]) * (ti - t0);
-            const a = P[i], b = P[j];
-            const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
-            const f = dLds * ds * (h >= D[k] ? 1 : -1) / h, i3 = i * 3, j3 = j * 3;
-            g[j3] += f * dx; g[j3 + 1] += f * dy; g[j3 + 2] += f * dz;
-            g[i3] -= f * dx; g[i3 + 1] -= f * dy; g[i3 + 2] -= f * dz;
-          }
-        }
-      }
+    for (let pass = 0; pass < KNIT_PASSES; pass++) {
       for (let i = 0; i < n - 1; i++) {
         if (breaks && breaks.has(i)) continue;
-        const a = P[i], b = P[i + 1];
+        const a = ref[i], b = ref[i + 1];
         const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
-        // ...held in a well with a flat bottom. A doubtful residue needs its local
-        // distances to be wrong, and the shortest of them is the bond to its neighbour;
-        // pinned exactly, the chain is too stiff to be doubtful anywhere and a
-        // disordered model reads back 19 points too confident. Free within a tenth of
-        // its length and firm past that, the backbone stays a backbone and the doubt
-        // has somewhere to go.
-        const h = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-9, slack = h - rest[i];
-        const off = slack > BOND_TOL ? slack - BOND_TOL : (slack < -BOND_TOL ? slack + BOND_TOL : 0);
-        loss += wB * off * off;
-        if (!g || !off) continue;
-        const f = 2 * wB * off / h, i3 = i * 3, j3 = i3 + 3;
-        g[j3] += f * dx; g[j3 + 1] += f * dy; g[j3 + 2] += f * dz;
-        g[i3] -= f * dx; g[i3 + 1] -= f * dy; g[i3 + 2] -= f * dz;
-      }
-      return loss;
-    }
-    // ...walked downhill: momentum for the direction, and a step taken only while it
-    // helps. Scaled by the field's own root-mean-square the move is the same size
-    // whatever the loss is, so a settled model would walk away from its own answer;
-    // halved whenever it does not help, the fit ends where it is best and needs no
-    // learning rate chosen per protein.
-    const g = new Float64Array(n * 3), mt = new Float64Array(n * 3), vt = new Float64Array(n * 3);
-    const dir = new Float64Array(n * 3), trial = ref.map(q => q.slice());
-    const recalibrate = () => {
-      if (!pairs || !L.score) return;
-      L.score(pairs, ref, hard, coords);
-      for (let i = 0; i < n; i++) bias[i] = lddt[i] - hard[i];
-    };
-    let mark = Infinity, markAt = 0;
-    let loss = evaluate(ref, g);
-    recalibrate();
-    loss = evaluate(ref, g);
-    let scale = FIT_LR;
-    mark = loss;
-    for (let it = 1; it <= FIT_ITERS; it++) {
-      // 🔴 PRECONDITIONED, OR THE FIT CANNOT MOVE AT ALL. A residue that a sampled row's
-      // frame is built from carries the whole of that row's gradient and is a hundred
-      // times steeper than the rest of the field; one step size for all of them is set
-      // by the steepest, and a doubtful model got nowhere. Each coordinate is divided by
-      // its own recent gradient size, with a floor at a fraction of the field's, so the
-      // flat parts still move and a residue with nothing to correct still does not.
-      const b1c = 1 - Math.pow(B1, it), b2c = 1 - Math.pow(B2, it);
-      let vs = 0;
-      for (let q = 0; q < n * 3; q++) {
-        mt[q] = B1 * mt[q] + (1 - B1) * g[q];
-        vt[q] = B2 * vt[q] + (1 - B2) * g[q] * g[q];
-        vs += vt[q];
-      }
-      const floor = EPS_REL * Math.sqrt((vs / (n * 3)) / b2c);
-      let ss = 0;
-      for (let q = 0; q < n * 3; q++) { dir[q] = (mt[q] / b1c) / (Math.sqrt(vt[q] / b2c) + floor); ss += dir[q] * dir[q]; }
-      const rms = Math.sqrt(ss / (n * 3)) || 1e-12;
-      let took = false;
-      for (let tries = 0; tries < 5 && !took; tries++) {
-        const step = scale / rms;
-        for (let i = 0; i < n; i++) { const i3 = i * 3; trial[i][0] = ref[i][0] - step * dir[i3]; trial[i][1] = ref[i][1] - step * dir[i3 + 1]; trial[i][2] = ref[i][2] - step * dir[i3 + 2]; }
-        const next = evaluate(trial, null);
-        if (next < loss) {
-          for (let i = 0; i < n; i++) { ref[i][0] = trial[i][0]; ref[i][1] = trial[i][1]; ref[i][2] = trial[i][2]; }
-          loss = next; scale = Math.min(FIT_CAP, scale * 1.3); took = true;
-        } else scale *= 0.4;
-      }
-      if (!took) { if (scale < 1e-4) break; }
-      else if (it % RECAL === 0) { recalibrate(); loss = evaluate(ref, g); }
-      else loss = evaluate(ref, g);
-      // ...and it stops when it has stopped getting anywhere. A folded model is settled
-      // in sixty steps and a disordered one is still moving at a hundred and fifty, so
-      // the count is the loss's to decide, not a number chosen for the worst case.
-      if (it - markAt >= SETTLE) {
-        if (mark - loss < 2e-3 * Math.abs(mark)) break;
-        mark = loss; markAt = it;
-      }
-    }
-    return ref;
-  }
-  // 🔴 ONE REFERENCE CARRIES BOTH, AND EVERY STRUCTURE HAS ONE. The error matrix is the
-  // large scale of a displacement and the per-residue confidence is its fine detail, so a
-  // single second structure holds both and the game reads them back with maths it already
-  // runs - the map from the pair in each residue's own frame, the confidence from the
-  // lDDT between them. Nothing about a prediction travels except that structure: a plain
-  // crystal structure gets one too, wobbled to the confidence such a file is given, so
-  // there is no predicted-versus-not branch anywhere downstream.
-  function referenceFor(coords, plddts, paeFlat, breaks, own) {
-    const n = coords.length;
-    const u = (paeFlat && paeFlat.length) ? referenceFrom(coords, paeFlat) : Array.from({ length: n }, () => [0, 0, 0]);
-    // ...and a seed wobble, so the fit has somewhere to push from. The lDDT of a
-    // structure sitting exactly on the model is 1 with a flat gradient in every
-    // direction; nudged off it, the fit can size each residue's disagreement. The
-    // direction is fixed by index and smoothed along the chain (a chain break stops the
-    // average), so both sides of a link start from the same structure and no seed has to
-    // be agreed on.
-    const raw = (i) => {
-      const a = Math.sin(i * 12.9898) * 43758.5453, b = Math.sin(i * 78.233) * 12345.6789, c = Math.sin(i * 39.425) * 24634.6345;
-      return [a - Math.floor(a) - 0.5, b - Math.floor(b) - 0.5, c - Math.floor(c) - 0.5];
-    };
-    const dirs = new Array(n);
-    for (let i = 0; i < n; i++) dirs[i] = raw(i);
-    for (let pass = 0; pass < 2; pass++) {
-      const next = new Array(n);
-      for (let i = 0; i < n; i++) {
-        let x = dirs[i][0], y = dirs[i][1], z = dirs[i][2], k = 1;
-        if (i > 0 && !(breaks && breaks.has(i - 1))) { x += dirs[i - 1][0]; y += dirs[i - 1][1]; z += dirs[i - 1][2]; k++; }
-        if (i < n - 1 && !(breaks && breaks.has(i))) { x += dirs[i + 1][0]; y += dirs[i + 1][1]; z += dirs[i + 1][2]; k++; }
-        next[i] = [x / k, y / k, z / k];
-      }
-      for (let i = 0; i < n; i++) dirs[i] = next[i];
-    }
-    for (let i = 0; i < n; i++) { const v = dirs[i], l = Math.hypot(v[0], v[1], v[2]) || 1; dirs[i] = [v[0] / l, v[1] / l, v[2] / l]; }
-    // ...sized, before the fit, until the local agreement between the two structures
-    // reads as each residue's own confidence. A residue the file calls certain (a grown
-    // limb is 100) keeps its reference point on the model. This is a starting structure,
-    // not the answer: the fit below descends from it and cannot climb out of a bad one,
-    // and from a bare displacement a doubtful model settled twice as far out.
-    const sure = (i) => (plddts[i] ?? 90) >= 99.5;
-    const ref = new Array(n), amp = new Float64Array(n);
-    for (let i = 0; i < n; i++) amp[i] = sure(i) ? 0 : 0.4;
-    const rest0 = new Float64Array(Math.max(0, n - 1));
-    for (let i = 0; i < n - 1; i++) rest0[i] = dist3(coords[i], coords[i + 1]);
-    const knit = (P) => {
-      for (let i = 0; i < n - 1; i++) {
-        if (breaks && breaks.has(i)) continue;
-        const a = P[i], b = P[i + 1];
-        const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
-        const l = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-9, k = 0.5 * (l - rest0[i]) / l;
+        const l = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-9, k = 0.5 * (l - rest[i]) / l;
         a[0] += dx * k; a[1] += dy * k; a[2] += dz * k;
         b[0] -= dx * k; b[1] -= dy * k; b[2] -= dz * k;
       }
-    };
-    const lay = () => {
-      for (let i = 0; i < n; i++) { const d = dirs[i], a = amp[i]; ref[i] = [coords[i][0] + u[i][0] + d[0] * a, coords[i][1] + u[i][1] + d[1] * a, coords[i][2] + u[i][2] + d[2] * a]; }
-      knit(ref);
-    };
-    lay();
-    const L0 = window.LDDT;
-    if (L0 && L0.prepare) {
-      const pairs = L0.prepare(coords, null), got = new Float32Array(n);
-      for (let it = 0; it < 14; it++) {
-        L0.score(pairs, ref, got, coords);
-        for (let i = 0; i < n; i++) {
-          if (sure(i)) continue;
-          const want = Math.max(0.2, Math.min(0.995, (plddts[i] ?? 90) / 100)), have = Math.max(0.001, got[i]);
-          const f = Math.max(0.5, Math.min(2, (1 - want + 1e-3) / (1 - have + 1e-3)));
-          amp[i] = Math.max(0, Math.min(12, amp[i] * Math.pow(f, 0.6) + (want < have ? 0.05 : -0.02)));
-        }
-        lay();
-      }
     }
-    fitReference(coords, ref, plddts, paeFlat, breaks, own);
     return ref.map(p => [round3(p[0]), round3(p[1]), round3(p[2])]);
   }
   // The matrix laid over the grown chain: a grown limb has no error of its own, so its
@@ -925,11 +632,55 @@
   // name: what to call it. text: the file. opts.pae: a flat n x n PAE (py2Dmol.paeFromJSON)
   // to draw under the live map. Returns the rig data game.js's makeForm takes, and a
   // description of what was found.
+  // 🔴 A LONG DOUBTFUL STRETCH IS CUT OUT, NOT MODELLED. A predicted model's hard parts
+  // are all in one place: the tails and linkers it has no confidence in. They make a bad
+  // fighter - a limb that is a hundred residues of noise flails - and they are the whole
+  // of the difficulty in carrying the model's uncertainty, since a confident domain's
+  // reference sits nearly on the model and a disordered one's has to be a structure that
+  // disagrees with it everywhere at once. Cut them and what is left is a few confident
+  // pieces: a multi-chain protein, which the rig already knows how to hold together.
+  //
+  // Only RUNS are cut, at least twenty residues of it, so a dip inside a domain is left
+  // alone and a folded model is untouched (GFP, haemoglobin, Top7 and the crystal
+  // structures lose nothing). If too little would be left to fight with, nothing is cut.
+  const CUT_BELOW = 60, CUT_RUN = 20, CUT_SMOOTH = 4, CUT_KEEP = 50;
+  function cutDoubtful(trace, pae) {
+    const pl = trace.plddts, n = pl.length;
+    const all = () => ({ trace, pae, cut: 0, keep: Array.from({ length: n }, (_, i) => i) });
+    if (!trace.hasPlddt || n < CUT_KEEP * 2) return all();
+    const sm = new Float64Array(n);
+    for (let i = 0; i < n; i++) { let s = 0, c = 0; for (let k = Math.max(0, i - CUT_SMOOTH); k <= Math.min(n - 1, i + CUT_SMOOTH); k++) { s += pl[k]; c++; } sm[i] = s / c; }
+    const drop = new Uint8Array(n);
+    for (let a = 0, i = 0; i <= n; i++) {
+      const low = i < n && sm[i] < CUT_BELOW;
+      if (low) { if (!a) a = i + 1; continue; }
+      if (a && i - (a - 1) >= CUT_RUN) for (let k = a - 1; k < i; k++) drop[k] = 1;
+      a = 0;
+    }
+    const keep = []; for (let i = 0; i < n; i++) if (!drop[i]) keep.push(i);
+    if (!keep.length || keep.length === n || keep.length < CUT_KEEP) return all();
+    const m2 = keep.length, breaks = new Set();
+    for (let k = 0; k < m2 - 1; k++) if (keep[k + 1] !== keep[k] + 1 || trace.breaks.has(keep[k])) breaks.add(k);
+    const out = {
+      coords: keep.map(i => trace.coords[i]), plddts: keep.map(i => pl[i]),
+      chains: keep.map(i => trace.chains[i]), resnum: keep.map(i => trace.resnum[i]),
+      breaks, hasPlddt: trace.hasPlddt,
+    };
+    let pae2 = pae;
+    if (pae && pae.length) {
+      const m = Math.round(Math.sqrt(pae.length));
+      pae2 = new pae.constructor(m2 * m2);
+      for (let a2 = 0; a2 < m2; a2++) { const r = keep[a2] * m, w = a2 * m2; for (let b2 = 0; b2 < m2; b2++) pae2[w + b2] = pae[r + keep[b2]]; }
+    }
+    return { trace: out, pae: pae2, cut: n - m2, keep };
+  }
   function buildCustomFighter(name, text, opts = {}) {
-    const trace = caTrace(text);
+    const read = caTrace(text);
+    const trimmed = cutDoubtful(read, opts.pae || null);
+    const trace = trimmed.trace;
     // The model's own error travels as a REFERENCE STRUCTURE, not as a matrix: see
     // referenceFrom. Built once here, from the matrix the AlphaFold DB supplied.
-    const paeIn = opts.pae || null;
+    const paeIn = trimmed.pae;
     let paeGrown = paeIn;
     const n = trace.coords.length;
     // its secondary structure, py2Dmol's own, on the trace as read (scaling or turning
@@ -962,12 +713,11 @@
     const need = [];
     if (!(roles.lleg && roles.rleg)) { need.push({ want: 'leg', sides: [-1, 1] }); delete roles.lleg; delete roles.rleg; }
     if (!roles.larm || !roles.rarm) need.push({ want: 'arm', sides: [!roles.larm ? -1 : null, !roles.rarm ? 1 : null].filter(v => v !== null) });
-    let grown = {}, grownPlddt = null, modelOwn = null;
+    let grown = {}, grownPlddt = null;
     if (need.length) {
       const g = growLimbs(coords, trace.plddts, trace.breaks, sec, roles, torsoBottom, torsoTop, need);
       coords = g.coords; trace.plddts = g.plddts; trace.breaks = g.breaks; roles = g.roles; grown = g.grown; grownPlddt = g.grownPlddt;
       if (paeIn && paeIn.length) paeGrown = growMatrixIndices(paeIn, g.map, coords.length);
-      modelOwn = new Set(); for (let i = 0; i < n; i++) modelOwn.add(g.map(i));   // which residues the matrix actually speaks for
       // the torso is every residue no limb has
       const inLimb = new Set(); for (const l of Object.values(roles)) if (l) for (let i = l.a; i <= l.b; i++) inLimb.add(i);
       torsoIdx.length = 0; for (let i = 0; i < coords.length; i++) if (!inLimb.has(i)) torsoIdx.push(i);
@@ -1042,22 +792,26 @@
       if (l.grown && l.kneeI != null) { pivots[side + 'leg_knee'] = coords[l.kneeI].slice(); pivots[side + 'leg_ankle'] = coords[l.footI].slice(); }
       else { pivots[side + 'leg_knee'] = at(cuts[0]); pivots[side + 'leg_ankle'] = at(cuts[1]); }
     }
-    // The model's confidence and its error, as ONE structure: see referenceFor. Built
-    // over the chain as it will fight, so a grown limb (confidence 100, no error of its
-    // own) simply sits on the model.
-    const ref = referenceFor(coords, trace.plddts, paeGrown, trace.breaks, modelOwn);
+    // The model's error, as a structure: see referenceFor. Built over the chain as it
+    // will fight, so a grown limb (no error of its own) simply sits on the model.
+    const ref = referenceFor(coords, paeGrown, trace.breaks);
     const data = {
       n_ca: coords.length,
       ca_res: coords.map((_, i) => i + 1),
       ca_xyz: coords.map(p => [round3(p[0]), round3(p[1]), round3(p[2])]),
       chain_breaks: [...trace.breaks].sort((a, b) => a - b),
-      ref,   // the model's confidence and its error, as a structure (referenceFor)
+      ref,   // the model's error, as a structure (referenceFor)
+      // ...and its confidence as itself, a byte a residue. It is O(n) and never was the
+      // reason anything travelled as a structure; folding it into one cost a wobble, a
+      // softened lDDT and a gradient fit to put back what the file already said.
+      base_plddt: trace.plddts.map(v => Math.round(Math.max(0, Math.min(100, v)))),
       pivots, domain_indices: domains,
       arm_hinge: 0.12,
     };
     return {
       name, rigData: data, special,
       residues: n, totalResidues: coords.length, hasPlddt: trace.hasPlddt, meanPlddt, grownPlddt,
+      cut: trimmed.cut,   // residues of doubtful chain left out (cutDoubtful)
       roles: Object.fromEntries(Object.entries(roles).filter(([, l]) => l).map(([k, l]) => [k, [l.a + 1, l.b + 1]])),
       legsAdded, armsAdded, grown: Object.fromEntries(Object.entries(grown).map(([k, l]) => [k, [l.a + 1, l.b + 1]])),
     };
@@ -1087,7 +841,7 @@
     return { text, pae, id: key, name: e.gene || e.uniprotId || key, title: e.uniprotDescription || '', plddt: e.globalMetricValue, organism: e.organismScientificName || '' };
   }
 
-  const api = { caTrace, orient, findLimbs, assignRoles, chooseSpecial, buildCustomFighter, fetchStructure, fetchAlphaFold, SPECIALS, SMALL, MAX_RESIDUES };
+  const api = { caTrace, cutDoubtful, orient, findLimbs, assignRoles, chooseSpecial, buildCustomFighter, fetchStructure, fetchAlphaFold, SPECIALS, SMALL, MAX_RESIDUES };
   if (typeof window !== 'undefined') window.CustomPdb = api;
   if (typeof module !== 'undefined') module.exports = api;
 })();

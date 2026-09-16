@@ -45,7 +45,7 @@ const FILES = [
   ['tests/structures/gfp.pdb', { special: 'spin', legsAdded: true, plddt: true }],
   ['tests/structures/gfp.cif', { special: 'spin', legsAdded: true, plddt: true }],
   ['tests/structures/hemoglobin_alpha.pdb', { special: 'spin', legsAdded: true, plddt: true }],
-  ['tests/structures/fus.pdb', { special: 'special', plddt: true }],
+  ['tests/structures/fus.pdb', { special: 'spin', plddt: true, cut: true }],   // 526 residues of mostly-disorder, cut to its three confident pieces
   ['scripts/helix_fighter.pdb', { special: 'special', legsAdded: false, plddt: false, roles: ['head', 'larm', 'rarm', 'lleg', 'rleg'] }],
   ['scripts/barrel_fighter.pdb', { special: 'special', legsAdded: false, plddt: false }],
 ];
@@ -56,6 +56,8 @@ for (const [file, want] of FILES) {
   results[file] = res;
   console.log(`${file}: ${res.residues} residues, pLDDT ${res.meanPlddt}${res.hasPlddt ? '' : ' (none in file)'}, ${res.special.special}, roles ${JSON.stringify(res.roles)}${res.legsAdded ? ', legs grown' : ''}`);
   check(res.special.special === want.special, `its size picks ${want.special}`);
+  if (want.cut) check(res.cut > 0 && res.residues < 200, `its doubtful stretches are cut out (${res.cut} residues left behind, ${res.residues} fight)`);
+  else check(!res.cut, 'it is confident throughout, so nothing is cut');
   if (want.legsAdded !== undefined) check(res.legsAdded === want.legsAdded, want.legsAdded ? 'it has no leg-like protrusions, so helix legs are added' : 'its own legs are found');
   check(res.hasPlddt === want.plddt, want.plddt ? 'its pLDDT is read from the file' : 'a scaffold with no prediction in it reads as folded, its B-factors left alone');
   if (want.roles) for (const r of want.roles) check(!!res.roles[r], `a ${r} is found`);
@@ -144,15 +146,18 @@ for (const [file, want] of FILES) {
   // ...and the same pair gives a file's confidence back. Asked of the file as it is: the
   // block matrix above is a deliberate contradiction - two interleaved halves 24 A apart
   // while every residue stays locally certain - and no single structure can hold both.
+  // The confidence travels as itself, a byte a residue, so it comes back exactly as the
+  // file gave it (to the rounding) and a grown limb reads 100.
   { const plain = results['tests/structures/gfp.pdb'], filePlddt = C.caTrace(gfpText).plddts;
-    const PX = plain.rigData.ca_xyz, grown2 = new Set();
+    const PX = plain.rigData.ca_xyz, bp = plain.rigData.base_plddt, grown2 = new Set();
     for (const [, [from, to]] of Object.entries(plain.grown)) for (let i = from - 1; i < to; i++) grown2.add(i);
     const ownPlain = []; for (let i = 0; i < PX.length; i++) if (!grown2.has(i)) ownPlain.push(i);
-    const pairs = window.LDDT.prepare(PX, null), got = new Float32Array(PX.length);
-    window.LDDT.score(pairs, plain.rigData.ref, got, PX);
+    check(bp && bp.length === PX.length, `the rig carries a confidence for every residue (${bp ? bp.length : 0})`);
     let err = 0, k = 0;
-    for (let i = 0; i < Math.min(ownPlain.length, filePlddt.length); i++) { err += Math.abs(filePlddt[i] - 100 * got[ownPlain[i]]); k++; }
-    check(err / k < 6, `the file's confidence is read back off the pair: ${(err / k).toFixed(1)} points out over ${k} residues`); }
+    for (let i = 0; i < Math.min(ownPlain.length, filePlddt.length); i++) { err += Math.abs(filePlddt[i] - bp[ownPlain[i]]); k++; }
+    check(err / k < 0.6, `the file's confidence comes back as itself: ${(err / k).toFixed(2)} points out over ${k} residues`);
+    let lowest = 100; for (const i of grown2) lowest = Math.min(lowest, bp[i]);
+    check(lowest === 100, `a grown limb has nothing to doubt (${lowest})`); }
   // ...and it is still a chain: every bond within a tenth of an Angstrom of the model's,
   // and nothing stitched across a chain break
   { const breaks = new Set(res.rigData.chain_breaks || []);

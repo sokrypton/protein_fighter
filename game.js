@@ -110,19 +110,16 @@
     // live map is drawn over, since standing still does not make that error go away.
     // It replaces an n x n matrix: 475 KB over a link for a 689-residue fighter, and up
     // to 9 MB to download, against three numbers a residue.
-    // ...and each residue's confidence, read off the same pair: the lDDT between the
-    // model and its reference IS the pLDDT the file carried (custom_pdb.js referenceFor
-    // sized the reference until it was). One structure, both quantities, and no
-    // predicted-versus-not branch: a structure with nothing to doubt has a reference that
-    // says so.
+    // ...and each residue's confidence as the file gave it, a byte a residue over a
+    // link. It was folded into the reference once, and read back off the lDDT between
+    // the two structures; that cost a wobble sized per residue and a gradient fit to
+    // reproduce a number the file states outright.
     let basePlddt = null;
     let paeBase = null;
     const refXyz = data.ref;
-    if (refXyz && refXyz.length === n && window.LDDT) {
-      const pairs = window.LDDT.prepare(data.ca_xyz, null), got = new Float32Array(n);
-      window.LDDT.score(pairs, refXyz, got, data.ca_xyz);
+    if (data.base_plddt && data.base_plddt.length === n) {
       basePlddt = new Float32Array(n);
-      for (let i = 0; i < n; i++) basePlddt[i] = Math.max(0, Math.min(100, 100 * got[i]));
+      for (let i = 0; i < n; i++) basePlddt[i] = Math.max(0, Math.min(100, data.base_plddt[i]));
     }
     if (refXyz && refXyz.length === n) {
       paeBase = new Float32Array(pb * pb);
@@ -1896,14 +1893,10 @@
   // frames a second at CPU x4, against 4.3 without it). py2Dmol now holds a hidden
   // viewer's draws as well; this stops the spin that asked for them.
   function closeCustomModal() { $('custom-modal').hidden = true; if (preview) preview.autoRotate = false; }
-  // Each residue's confidence, read off the pair the rig carries (see makeForm).
-  const plddtOf = (rigData) => {
-    const X = rigData.ca_xyz, R = rigData.ref;
-    if (!R || R.length !== X.length || !window.LDDT) return X.map(() => 90);
-    const pairs = window.LDDT.prepare(X, null), got = new Float32Array(X.length);
-    window.LDDT.score(pairs, R, got, X);
-    return Array.from(got, v => Math.max(0, Math.min(100, 100 * v)));
-  };
+  // Each residue's confidence, as the rig carries it (custom_pdb.js).
+  const plddtOf = (rigData) => rigData.base_plddt && rigData.base_plddt.length === rigData.ca_xyz.length
+    ? rigData.base_plddt.map(v => Math.max(0, Math.min(100, v)))
+    : rigData.ca_xyz.map(() => 90);
   // The fighter as it will stand, in a viewer of its own in the card: the built body
   // (limbs grown, legs on the floor) with the model's own pLDDT, in the game's colours,
   // turning slowly until dragged. One viewer, made the first time and reloaded after.
@@ -1978,7 +1971,7 @@
   // ...as player i's form, custom0 or custom1: each player may have its own.
   function installCustom(spec, i) {
     const key = 'custom' + i;
-    FORMS[key] = makeForm(key, spec.rigData);   // the rig carries its reference (custom_pdb.js referenceFor)
+    FORMS[key] = makeForm(key, spec.rigData);   // the rig carries its reference and its confidence (custom_pdb.js)
     FORMS[key].displayName = String(spec.name).toUpperCase();
     SPECIAL[key] = spec.special.special;
     customSpec[i] = spec;
@@ -1990,7 +1983,7 @@
 
   // A few to try, by accession: the presets fill the field and fetch, so they work from
   // any page that reaches the archives, a file opened straight from disk included.
-  const PRESETS = { gfp: 'P42212', hba: 'P69905', insulin: 'P01308', ubq: '1UBQ' };   // three from the AlphaFold DB, one from the PDB
+  const PRESETS = { gfp: 'P42212', hba: 'P69905', top7: '1QYS', ubq: '1UBQ' };   // two from the AlphaFold DB, two from the PDB
   for (const b of document.querySelectorAll('[data-preset]')) b.onclick = () => { $('uniprot-input').value = PRESETS[b.dataset.preset] || b.dataset.preset; $('btn-fetch-af').click(); };
   // A PDB id or a UniProt accession, as py2Dmol's own fetch box takes them (custom_pdb.js).
   $('btn-fetch-af').onclick = async () => {

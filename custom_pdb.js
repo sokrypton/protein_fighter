@@ -509,50 +509,72 @@
   // the AlphaFold DB's own matrices, pooled to the 64-pixel map the game draws, the
   // regenerated map is 0.5 to 3.5 A out of a 31.75 A scale (GFP 0.95, haemoglobin 0.52,
   // insulin 3.49, FUS 1.83), which is a shade of colour on a small panel.
+  // 🔴 AND IT IS SCALED ON A THINNED CHAIN. Both halves of it - the leading directions
+  // and the metric refinement - are n-squared a pass, so a big model paid for the start
+  // and not the answer: two seconds of a three-second build for the spike, and nine at
+  // the three-thousand-residue limit. The matrix is smooth at this range (it is what the
+  // displacement is smoothed along the chain for anyway), so it is solved on at most
+  // four hundred residues spread through the chain and spread back between them, and the
+  // fit below corrects the detail at full resolution. Fixed cost, whatever the size.
+  const SCALE_CAP = 400;
   function referenceFrom(coords, pae) {
     const n = coords.length, m = Math.round(Math.sqrt(pae.length));
     if (!m || m < 2) return null;
     const lim = Math.min(n, m);
-    const at = (i, j) => (pae[i * m + j] + pae[j * m + i]) / 16;   // the flat map is A x 8, and asymmetric
+    const stride = Math.max(1, Math.ceil(lim / SCALE_CAP)), pick = [];
+    for (let i = 0; i < lim; i += stride) pick.push(i);
+    if (pick[pick.length - 1] !== lim - 1) pick.push(lim - 1);
+    const N = pick.length;
+    const at = (i, j) => (pae[pick[i] * m + pick[j]] + pae[pick[j] * m + pick[i]]) / 16;   // the flat map is A x 8, and asymmetric
     // classical scaling: B = -1/2 J D^2 J, then its three leading directions
-    const d2 = new Float64Array(lim * lim), rowMean = new Float64Array(lim);
+    const d2 = new Float64Array(N * N), rowMean = new Float64Array(N);
     let all = 0;
-    for (let i = 0; i < lim; i++) { let sum = 0; for (let j = 0; j < lim; j++) { const v = at(i, j); const q = v * v; d2[i * lim + j] = q; sum += q; } rowMean[i] = sum / lim; all += sum; }
-    all /= lim * lim;
+    for (let i = 0; i < N; i++) { let sum = 0; for (let j = 0; j < N; j++) { const v = at(i, j); const q = v * v; d2[i * N + j] = q; sum += q; } rowMean[i] = sum / N; all += sum; }
+    all /= N * N;
     const B = d2;   // in place: the squared distances are not needed again
-    for (let i = 0; i < lim; i++) for (let j = 0; j < lim; j++) B[i * lim + j] = -0.5 * (B[i * lim + j] - rowMean[i] - rowMean[j] + all);
-    const vecs = [], vals = [], w = new Float64Array(lim);
+    for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) B[i * N + j] = -0.5 * (B[i * N + j] - rowMean[i] - rowMean[j] + all);
+    const vecs = [], vals = [], w = new Float64Array(N);
     for (let k = 0; k < 3; k++) {
-      let v = new Float64Array(lim);
-      for (let i = 0; i < lim; i++) v[i] = Math.sin(i * (k + 1) * 0.7) + 0.1;
+      let v = new Float64Array(N);
+      for (let i = 0; i < N; i++) v[i] = Math.sin(i * (k + 1) * 0.7) + 0.1;
       let lam = 0;
       for (let it = 0; it < 120; it++) {
-        for (let i = 0; i < lim; i++) { let sum = 0; const r = i * lim; for (let j = 0; j < lim; j++) sum += B[r + j] * v[j]; w[i] = sum; }
-        for (const u of vecs) { let dot = 0; for (let i = 0; i < lim; i++) dot += w[i] * u[i]; for (let i = 0; i < lim; i++) w[i] -= dot * u[i]; }
-        let norm = 0; for (let i = 0; i < lim; i++) norm += w[i] * w[i];
+        for (let i = 0; i < N; i++) { let sum = 0; const r = i * N; for (let j = 0; j < N; j++) sum += B[r + j] * v[j]; w[i] = sum; }
+        for (const q of vecs) { let dot = 0; for (let i = 0; i < N; i++) dot += w[i] * q[i]; for (let i = 0; i < N; i++) w[i] -= dot * q[i]; }
+        let norm = 0; for (let i = 0; i < N; i++) norm += w[i] * w[i];
         norm = Math.sqrt(norm) || 1;
-        for (let i = 0; i < lim; i++) v[i] = w[i] / norm;
+        for (let i = 0; i < N; i++) v[i] = w[i] / norm;
         lam = norm;
       }
       vecs.push(v.slice()); vals.push(Math.max(0, lam));
     }
-    const u = Array.from({ length: n }, () => [0, 0, 0]);
-    for (let k = 0; k < 3; k++) { const sc = Math.sqrt(vals[k]); for (let i = 0; i < lim; i++) u[i][k] = vecs[k][i] * sc; }
+    const s = Array.from({ length: N }, () => [0, 0, 0]);
+    for (let k = 0; k < 3; k++) { const sc = Math.sqrt(vals[k]); for (let i = 0; i < N; i++) s[i][k] = vecs[k][i] * sc; }
     // ...refined: each point moved to where every pair would put it (metric scaling)
     for (let it = 0; it < 30; it++) {
-      const next = Array.from({ length: lim }, () => [0, 0, 0]);
-      for (let i = 0; i < lim; i++) {
-        const a = u[i];
-        for (let j = 0; j < lim; j++) {
+      const next = Array.from({ length: N }, () => [0, 0, 0]);
+      for (let i = 0; i < N; i++) {
+        const a = s[i];
+        for (let j = 0; j < N; j++) {
           if (i === j) continue;
-          const b = u[j], dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+          const b = s[j], dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
           const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6, f = at(i, j) / d;
           next[i][0] += b[0] + f * dx; next[i][1] += b[1] + f * dy; next[i][2] += b[2] + f * dz;
         }
       }
-      for (let i = 0; i < lim; i++) { u[i][0] = next[i][0] / (lim - 1); u[i][1] = next[i][1] / (lim - 1); u[i][2] = next[i][2] / (lim - 1); }
+      for (let i = 0; i < N; i++) { s[i][0] = next[i][0] / (N - 1); s[i][1] = next[i][1] / (N - 1); s[i][2] = next[i][2] / (N - 1); }
     }
-    // the displacement itself; past the matrix's own length (a grown limb) there is none
+    // ...spread back over the residues between the ones it was solved on
+    const u = Array.from({ length: n }, () => [0, 0, 0]);
+    for (let k = 0; k + 1 < N; k++) {
+      const a = pick[k], b = pick[k + 1], span = b - a;
+      for (let i = a; i <= b && i < lim; i++) {
+        const t = span ? (i - a) / span : 0;
+        for (let c = 0; c < 3; c++) u[i][c] = s[k][c] * (1 - t) + s[k + 1][c] * t;
+      }
+    }
+    if (N === 1) for (let i = 0; i < lim; i++) u[i] = s[0].slice();
+    // past the matrix's own length (a grown limb) there is no displacement
     for (let i = lim; i < n; i++) u[i] = [0, 0, 0];
     return u;
   }
@@ -579,7 +601,7 @@
     l = Math.hypot(x2, y2, z2) || 1; x2 /= l; y2 /= l; z2 /= l;
     return [c, o, [x1, y1, z1], [x2, y2, z2], [y1 * z2 - z1 * y2, z1 * x2 - x1 * z2, x1 * y2 - y1 * x2]];
   };
-  const FIT_ROWS = 96;   // the map is read off strided rows anyway, and every column of each
+  const FIT_ROWS = 96, COL_CAP = 384;   // the map is read off strided rows anyway, and every column of each
   function fitReference(coords, ref, plddts, paeFlat, breaks, own) {
     const n = coords.length;
     const m = (paeFlat && paeFlat.length) ? Math.round(Math.sqrt(paeFlat.length)) : 0;
@@ -589,7 +611,13 @@
     // only the convention that it has none, and made to read zero against every row it
     // pulled the fit away from the pairs that carry data.
     const pool = []; for (let i = 0; i < lim; i++) if (!own || own.has(i)) pool.push(i);
-    const cols = Int32Array.from(pool), rows = [];
+    // ...and read at a spacing, not residue by residue. The map is drawn as sixty-four
+    // pixels a side and every pixel already averages a block of residues together, so a
+    // column every few residues says the same thing for a fraction of the work, and the
+    // fit stops costing more the bigger the protein is. Below the cap nothing is
+    // dropped; the spike's 1,274 residues fit in the time its 400th used to take.
+    const cstride = Math.max(1, Math.ceil(pool.length / COL_CAP));
+    const cols = Int32Array.from(pool.filter((_, k) => k % cstride === 0)), rows = [];
     if (pool.length > 1) { const R = Math.min(pool.length, FIT_ROWS); for (let k = 0; k < R; k++) rows.push(pool[Math.round(k * (pool.length - 1) / Math.max(1, R - 1))]); }
     const L = window.LDDT, pairs = (L && L.prepare) ? L.prepare(coords, null) : null;
     const want = new Float64Array(n);

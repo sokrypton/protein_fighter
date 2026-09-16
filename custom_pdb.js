@@ -494,12 +494,76 @@
     return { special, ...SPECIALS[special], helix: fH, strand: fE, plddt: m };
   }
 
-  // The PAE with the grown residues' rows and columns added: they have no error of
-  // their own, so nothing below the live map there.
-  function growPae(pae, map, n2) {
-    if (!pae || !pae.length) return pae;
-    const m = Math.round(Math.sqrt(pae.length)), out = new pae.constructor(n2 * n2);
-    for (let i = 0; i < m; i++) { const r = map(i) * n2; for (let j = 0; j < m; j++) out[r + map(j)] = pae[i * m + j]; }
+  // ------------------------------------------------ the model's error, as a structure
+  // 🔴 A MATRIX IS NOT WHAT THE GAME NEEDS, A SECOND STRUCTURE IS. The live map is
+  // already "how far is j from where the reference puts it, seen in i's own frame"
+  // (game.js updatePAE), so a structure displaced from the model by as much as the
+  // predicted error says REPRODUCES that error through the same code. The matrix is
+  // n x n - 475 KB for a 689-residue fighter over a link, and up to 9 MB to download -
+  // while a structure is three numbers a residue.
+  //
+  // Finding it is the matrix's own inverse: a displacement field whose pairwise spread
+  // matches the error. That is classical scaling (the top three eigenvectors of the
+  // double-centred squared matrix) refined by a few rounds of metric scaling. It cannot
+  // be exact - 3n numbers cannot hold n^2 - and it does not need to be: measured against
+  // the AlphaFold DB's own matrices, pooled to the 64-pixel map the game draws, the
+  // regenerated map is 0.5 to 3.5 A out of a 31.75 A scale (GFP 0.95, haemoglobin 0.52,
+  // insulin 3.49, FUS 1.83), which is a shade of colour on a small panel.
+  function referenceFrom(coords, pae) {
+    const n = coords.length, m = Math.round(Math.sqrt(pae.length));
+    if (!m || m < 2) return null;
+    const lim = Math.min(n, m);
+    const at = (i, j) => (pae[i * m + j] + pae[j * m + i]) / 16;   // the flat map is A x 8, and asymmetric
+    // classical scaling: B = -1/2 J D^2 J, then its three leading directions
+    const d2 = new Float64Array(lim * lim), rowMean = new Float64Array(lim);
+    let all = 0;
+    for (let i = 0; i < lim; i++) { let sum = 0; for (let j = 0; j < lim; j++) { const v = at(i, j); const q = v * v; d2[i * lim + j] = q; sum += q; } rowMean[i] = sum / lim; all += sum; }
+    all /= lim * lim;
+    const B = d2;   // in place: the squared distances are not needed again
+    for (let i = 0; i < lim; i++) for (let j = 0; j < lim; j++) B[i * lim + j] = -0.5 * (B[i * lim + j] - rowMean[i] - rowMean[j] + all);
+    const vecs = [], vals = [], w = new Float64Array(lim);
+    for (let k = 0; k < 3; k++) {
+      let v = new Float64Array(lim);
+      for (let i = 0; i < lim; i++) v[i] = Math.sin(i * (k + 1) * 0.7) + 0.1;
+      let lam = 0;
+      for (let it = 0; it < 120; it++) {
+        for (let i = 0; i < lim; i++) { let sum = 0; const r = i * lim; for (let j = 0; j < lim; j++) sum += B[r + j] * v[j]; w[i] = sum; }
+        for (const u of vecs) { let dot = 0; for (let i = 0; i < lim; i++) dot += w[i] * u[i]; for (let i = 0; i < lim; i++) w[i] -= dot * u[i]; }
+        let norm = 0; for (let i = 0; i < lim; i++) norm += w[i] * w[i];
+        norm = Math.sqrt(norm) || 1;
+        for (let i = 0; i < lim; i++) v[i] = w[i] / norm;
+        lam = norm;
+      }
+      vecs.push(v.slice()); vals.push(Math.max(0, lam));
+    }
+    const u = Array.from({ length: n }, () => [0, 0, 0]);
+    for (let k = 0; k < 3; k++) { const sc = Math.sqrt(vals[k]); for (let i = 0; i < lim; i++) u[i][k] = vecs[k][i] * sc; }
+    // ...refined: each point moved to where every pair would put it (metric scaling)
+    for (let it = 0; it < 30; it++) {
+      const next = Array.from({ length: lim }, () => [0, 0, 0]);
+      for (let i = 0; i < lim; i++) {
+        const a = u[i];
+        for (let j = 0; j < lim; j++) {
+          if (i === j) continue;
+          const b = u[j], dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+          const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6, f = at(i, j) / d;
+          next[i][0] += b[0] + f * dx; next[i][1] += b[1] + f * dy; next[i][2] += b[2] + f * dz;
+        }
+      }
+      for (let i = 0; i < lim; i++) { u[i][0] = next[i][0] / (lim - 1); u[i][1] = next[i][1] / (lim - 1); u[i][2] = next[i][2] / (lim - 1); }
+    }
+    // the reference: the model plus that displacement. Past the matrix's own length
+    // (a grown limb) it sits on the model, which is no error at all.
+    return coords.map((p, i) => (i < lim
+      ? [round3(p[0] + u[i][0]), round3(p[1] + u[i][1]), round3(p[2] + u[i][2])]
+      : [p[0], p[1], p[2]]));
+  }
+  // The reference with the grown residues' points added: a grown limb has no error of
+  // its own, so its reference point is the point itself.
+  function growRef(ref, coords, map) {
+    if (!ref) return ref;
+    const out = coords.map(p => [p[0], p[1], p[2]]);
+    for (let i = 0; i < ref.length; i++) { const k = map(i); if (k < out.length) out[k] = ref[i]; }
     return out;
   }
 
@@ -509,7 +573,10 @@
   // description of what was found.
   function buildCustomFighter(name, text, opts = {}) {
     const trace = caTrace(text);
-    let pae = opts.pae || null;
+    // The model's own error travels as a REFERENCE STRUCTURE, not as a matrix: see
+    // referenceFrom. Built once here, from the matrix the AlphaFold DB supplied.
+    const paeIn = opts.pae || null;
+    let ref = null;
     const n = trace.coords.length;
     // its secondary structure, py2Dmol's own, on the trace as read (scaling or turning
     // changes nothing about it, but it is computed once); then stood up, and the way up
@@ -541,10 +608,13 @@
     const need = [];
     if (!(roles.lleg && roles.rleg)) { need.push({ want: 'leg', sides: [-1, 1] }); delete roles.lleg; delete roles.rleg; }
     if (!roles.larm || !roles.rarm) need.push({ want: 'arm', sides: [!roles.larm ? -1 : null, !roles.rarm ? 1 : null].filter(v => v !== null) });
+    // ...and the model's error as a structure, in the pose the body now stands in: the
+    // displacement is a spread, so turning the body turns it with no change to the map.
+    if (paeIn && paeIn.length) ref = referenceFrom(coords, paeIn);
     let grown = {}, grownPlddt = null;
     if (need.length) {
       const g = growLimbs(coords, trace.plddts, trace.breaks, sec, roles, torsoBottom, torsoTop, need);
-      coords = g.coords; trace.plddts = g.plddts; trace.breaks = g.breaks; roles = g.roles; grown = g.grown; grownPlddt = g.grownPlddt; pae = growPae(pae, g.map, coords.length);
+      coords = g.coords; trace.plddts = g.plddts; trace.breaks = g.breaks; roles = g.roles; grown = g.grown; grownPlddt = g.grownPlddt; ref = growRef(ref, coords, g.map);
       // the torso is every residue no limb has
       const inLimb = new Set(); for (const l of Object.values(roles)) if (l) for (let i = l.a; i <= l.b; i++) inLimb.add(i);
       torsoIdx.length = 0; for (let i = 0; i < coords.length; i++) if (!inLimb.has(i)) torsoIdx.push(i);
@@ -632,7 +702,7 @@
       name, rigData: data, special,
       residues: n, totalResidues: coords.length, hasPlddt: trace.hasPlddt, meanPlddt, grownPlddt,
       roles: Object.fromEntries(Object.entries(roles).filter(([, l]) => l).map(([k, l]) => [k, [l.a + 1, l.b + 1]])),
-      legsAdded, armsAdded, grown: Object.fromEntries(Object.entries(grown).map(([k, l]) => [k, [l.a + 1, l.b + 1]])), pae,
+      legsAdded, armsAdded, grown: Object.fromEntries(Object.entries(grown).map(([k, l]) => [k, [l.a + 1, l.b + 1]])), ref,
     };
   }
 

@@ -63,6 +63,7 @@
   // (the columns), so the update costs a couple of rows per pixel of the map whatever
   // the size rather than the square of it.
   const PAE_BIN = 4, PAE_SIDE = 64, PAE_ROWS = 400;
+  const PAE_MAX = 30;   // the map's ceiling, in Angstrom
   // ...and how many sampled rows fall in one pixel of the map. The rows are the
   // expensive half: each is compared against every residue, twice (the live pose and the
   // undamaged one), so 400 rows on a 689-residue fighter is 550,000 comparisons an update
@@ -101,18 +102,43 @@
     const paeCount = new Float32Array(pb * pb);
     const paeSum = new Float32Array(pb * pb);
     for (let i = 0; i < n; i += stride) for (let j = 0; j < n; j++) paeCount[(i / paeBin | 0) * pb + (j / paeBin | 0)]++;
-    // A real PAE that came with the structure (the AlphaFold DB's), pooled to the map's
-    // pixels: the floor the live map is drawn over, since an error the model already
-    // had does not go away by standing still.
+    // THE MODEL'S OWN ERROR, FROM A SECOND STRUCTURE. A predicted model carries a
+    // reference (custom_pdb.js referenceFrom): a structure displaced from it by as much
+    // as its predicted error said, so the same comparison the live map makes - where
+    // each residue puts every other, in its own frame - gives the error the model
+    // already had. Computed once here, pooled to the map's pixels, and the floor the
+    // live map is drawn over, since standing still does not make that error go away.
+    // It replaces an n x n matrix: 475 KB over a link for a 689-residue fighter, and up
+    // to 9 MB to download, against three numbers a residue.
     let paeBase = null;
-    if (data.pae_flat && data.pae_flat.length) {
-      const m = Math.round(Math.sqrt(data.pae_flat.length));
-      if (m >= 2) {
-        paeBase = new Float32Array(pb * pb); const cnt = new Float32Array(pb * pb);
-        const lim = Math.min(m, n);   // the map is laid over the grown chain already (custom_pdb.js growPae): grown residues have no error of their own
-        for (let i = 0; i < lim; i++) for (let j = 0; j < lim; j++) { const b = (i / paeBin | 0) * pb + (j / paeBin | 0); paeBase[b] += data.pae_flat[i * m + j] / 8; cnt[b]++; }
-        for (let b = 0; b < pb * pb; b++) paeBase[b] = cnt[b] ? paeBase[b] / cnt[b] : 0;
+    const refXyz = data.ref;
+    if (refXyz && refXyz.length === n) {
+      paeBase = new Float32Array(pb * pb);
+      const cnt = new Float32Array(pb * pb);
+      const frame = (P, i) => {
+        const c = Math.min(n - 2, Math.max(1, i)), a = P[c - 1], o = P[c], b = P[c + 1];
+        let x1 = b[0] - o[0], y1 = b[1] - o[1], z1 = b[2] - o[2];
+        let l = Math.hypot(x1, y1, z1) || 1; x1 /= l; y1 /= l; z1 /= l;
+        let x2 = a[0] - o[0], y2 = a[1] - o[1], z2 = a[2] - o[2];
+        const d = x2 * x1 + y2 * y1 + z2 * z1; x2 -= d * x1; y2 -= d * y1; z2 -= d * z1;
+        l = Math.hypot(x2, y2, z2) || 1; x2 /= l; y2 /= l; z2 /= l;
+        return [o, [x1, y1, z1], [x2, y2, z2], [y1 * z2 - z1 * y2, z1 * x2 - x1 * z2, x1 * y2 - y1 * x2]];
+      };
+      const P = data.ca_xyz;
+      for (let i = 0; i < n; i += stride) {
+        const [o, e1, e2, e3] = frame(P, i), [q, f1, f2, f3] = frame(refXyz, i), row = (i / paeBin | 0) * pb;
+        for (let j = 0; j < n; j++) {
+          const p = P[j], r = refXyz[j];
+          const vx = p[0] - o[0], vy = p[1] - o[1], vz = p[2] - o[2];
+          const wx = r[0] - q[0], wy = r[1] - q[1], wz = r[2] - q[2];
+          const dx = (e1[0] * vx + e1[1] * vy + e1[2] * vz) - (f1[0] * wx + f1[1] * wy + f1[2] * wz);
+          const dy = (e2[0] * vx + e2[1] * vy + e2[2] * vz) - (f2[0] * wx + f2[1] * wy + f2[2] * wz);
+          const dz = (e3[0] * vx + e3[1] * vy + e3[2] * vz) - (f3[0] * wx + f3[1] * wy + f3[2] * wz);
+          const b = row + (j / paeBin | 0);
+          paeBase[b] += Math.min(PAE_MAX, Math.sqrt(dx * dx + dy * dy + dz * dz)); cnt[b]++;
+        }
       }
+      for (let b = 0; b < pb * pb; b++) paeBase[b] = cnt[b] ? paeBase[b] / cnt[b] : 0;
     }
     // Which rigid part each residue belongs to, for the lDDT: a loop between parts is a
     // group of its own, so a limb swinging away from the body is not read as the body
@@ -1400,7 +1426,6 @@
   // white against everything. Every residue against every residue, averaged four by four
   // into a map a pixel per PAE_BIN residues each way: the row is the residue aligned on,
   // the column the one scored.
-  const PAE_MAX = 30;
   // Residue i's frame, twelve numbers: the origin, then three orthonormal axes.
   function localFrames(coords, F) {
     const N = coords.length;
@@ -1932,13 +1957,13 @@
   // ...as player i's form, custom0 or custom1: each player may have its own.
   function installCustom(spec, i) {
     const key = 'custom' + i;
-    FORMS[key] = makeForm(key, { ...spec.rigData, pae_flat: spec.pae || null });
+    FORMS[key] = makeForm(key, { ...spec.rigData, ref: spec.ref || null });
     FORMS[key].displayName = String(spec.name).toUpperCase();
     SPECIAL[key] = spec.special.special;
     customSpec[i] = spec;
     $('pick-custom-' + i).textContent = String(spec.name).toUpperCase().slice(0, 10);
   }
-  const customWire = spec => ({ name: spec.name, rigData: spec.rigData, special: spec.special, pae: spec.pae ? Array.from(spec.pae) : null, roles: spec.roles, legsAdded: spec.legsAdded, residues: spec.residues, hasPlddt: spec.hasPlddt, meanPlddt: spec.meanPlddt });
+  const customWire = spec => ({ name: spec.name, rigData: spec.rigData, special: spec.special, ref: spec.ref || null, roles: spec.roles, legsAdded: spec.legsAdded, residues: spec.residues, hasPlddt: spec.hasPlddt, meanPlddt: spec.meanPlddt });
   // No CANCEL: a click on the veil, or Escape, leaves the card.
   $('custom-modal').onclick = e => { if (e.target === $('custom-modal')) closeCustomModal(); };
 

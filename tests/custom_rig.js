@@ -88,29 +88,50 @@ for (const [file, want] of FILES) {
   const posed = rig.pose({}), held = wide.every(i => Math.abs(d(posed[i], posed[i + 1]) - d(rig.bind[i], rig.bind[i + 1])) < 0.5);
   check(gap != null, `residues 100–112 missing: the chain breaks at 99|113`);
   check(wide.length >= 1 && held, `the rig carries the gap (${wide.map(i => d(rig.bind[i], rig.bind[i + 1]).toFixed(1) + ' Å').join(', ')}) and poses no bond across it`); }
-// Too big to fight is refused before anything is built; the AlphaFold PAE that comes
-// with a model is laid over the grown chain by the growth map, each of the model's own
-// residues keeping its row and column at its new index.
+// Too big to fight is refused before anything is built. And a model's own error travels
+// as a REFERENCE STRUCTURE rather than as a matrix: custom_pdb.js inverts the matrix into
+// a structure displaced by as much as the error said, and game.js regenerates the map
+// from the pair. A matrix that is confident within each half of a chain and doubtful
+// between them has to come back as exactly that.
 { const pdb = n => Array.from({ length: n }, (_, i) => `ATOM  ${String(i + 1).padStart(5)}  CA  GLY A${String(i + 1).padStart(4)}    ${(i * 3.8).toFixed(3).padStart(8)}   0.000   0.000  1.00 ${(50 + (i % 40)).toFixed(2)}           C`).join('\n');
   let refused = false; try { C.caTrace(pdb(3200)); } catch (e) { refused = /too many/.test(e.message); }
   check(refused, 'a structure over the size limit is refused');
-  const M = 300, pae = new Uint8Array(M * M); for (let i = 0; i < M; i++) for (let j = 0; j < M; j++) pae[i * M + j] = (i + j) % 200;
-  const res = C.buildCustomFighter('long', 'REMARK ALPHAFOLD\n' + pdb(M), { pae });
-  const idx = []; res.rigData.base_plddt.forEach((v, i) => { if (v !== res.grownPlddt) idx.push(i); });   // grown residues carry 100; the model's own here never do
-  const n2 = res.totalResidues; let paeOk = res.pae && res.pae.length === n2 * n2 && idx.length === M;
-  for (let k = 0; paeOk && k < M; k += 7) for (let l = 0; l < M; l += 11) if (res.pae[idx[k] * n2 + idx[l]] !== (k + l) % 200) paeOk = false;
-  check(paeOk, `the PAE is laid over the grown chain (${n2} x ${n2}), the model's own residues at their new indices`); }
-// lDDT: whole at the bell, and a scored stretch drops when it is scrambled.
-{ const res = results['tests/structures/gfp.pdb'], ref = res.rigData.ca_xyz.map(p => p.slice());
-  const rig = new DomainRig(res.rigData), group = rig.owner.map((o, i) => o || 'loop');
-  const pairs = window.LDDT.prepare(ref, group), out = new Float32Array(ref.length);
-  window.LDDT.score(pairs, ref, out);
-  const whole = [...out].every(v => v === 1);
-  const mangled = ref.map((p, i) => i >= 60 && i < 90 ? [p[0] + (i % 2 ? 4 : -4), p[1] + 3, p[2]] : p);
-  window.LDDT.score(pairs, mangled, out);
-  // ...and residues nowhere near the scrambled stretch keep their score
-  const far = ref.map((p, i) => i).filter(i => (i < 60 || i >= 90) && ref.slice(60, 90).every(q => Math.hypot(q[0] - ref[i][0], q[1] - ref[i][1], q[2] - ref[i][2]) > 16));
-  const farMean = far.reduce((s, i) => s + out[i], 0) / far.length;
-  check(whole && out[75] < 0.5 && farMean > 0.98, `lDDT is 1 at the bell, a scrambled stretch scores ${out[75].toFixed(2)}, and the ${far.length} residues clear of it keep ${farMean.toFixed(2)}`); }
+  // ...on a real fold, not a straight line: a chain on one axis has no local frame to
+  // measure anything in, and the regenerated map would be meaningless there.
+  const gfpText = fs.readFileSync(path.join(ROOT, 'tests/structures/gfp.pdb'), 'utf8');
+  const M = C.caTrace(gfpText).coords.length, half = M / 2, NEAR = 1, FAR = 24;
+  const pae = new Uint8Array(M * M);   // the flat map is Angstrom x 8, as py2Dmol gives it
+  for (let i = 0; i < M; i++) for (let j = 0; j < M; j++) pae[i * M + j] = 8 * ((i < half) === (j < half) ? NEAR : FAR);
+  const res = C.buildCustomFighter('two halves', gfpText, { pae });
+  check(!!res.ref && res.ref.length === res.totalResidues, `the model's error comes back as a reference structure (${res.ref ? res.ref.length : 0} points for ${res.totalResidues} residues)`);
+  // a grown limb has no error of its own: its reference point IS its point
+  const X = res.rigData.ca_xyz, grownIdx = [];
+  for (const [, [from, to]] of Object.entries(res.grown)) for (let i = from - 1; i < to; i++) grownIdx.push(i);
+  const grownStill = grownIdx.every(i => Math.abs(X[i][0] - res.ref[i][0]) < 1e-6 && Math.abs(X[i][1] - res.ref[i][1]) < 1e-6 && Math.abs(X[i][2] - res.ref[i][2]) < 1e-6);
+  check(grownIdx.length > 0 && grownStill, `the ${grownIdx.length} grown residues sit on the model, so they carry no error`);
+  // and the pair regenerates the map: near within a half, far between them
+  const own = []; res.rigData.base_plddt.forEach((v, i) => { if (v !== res.grownPlddt) own.push(i); });
+  const frame = (P, i) => { const n = P.length, c = Math.min(n - 2, Math.max(1, i)), a = P[c - 1], o = P[c], b = P[c + 1];
+    let x1 = b[0] - o[0], y1 = b[1] - o[1], z1 = b[2] - o[2]; let l = Math.hypot(x1, y1, z1) || 1; x1 /= l; y1 /= l; z1 /= l;
+    let x2 = a[0] - o[0], y2 = a[1] - o[1], z2 = a[2] - o[2]; const d = x2 * x1 + y2 * y1 + z2 * z1; x2 -= d * x1; y2 -= d * y1; z2 -= d * z1;
+    l = Math.hypot(x2, y2, z2) || 1; x2 /= l; y2 /= l; z2 /= l;
+    return [o, [x1, y1, z1], [x2, y2, z2], [y1 * z2 - z1 * y2, z1 * x2 - x1 * z2, x1 * y2 - y1 * x2]]; };
+  const err = (i, j) => { const [o, e1, e2, e3] = frame(X, i), [q, f1, f2, f3] = frame(res.ref, i);
+    const p = X[j], r = res.ref[j];
+    const vx = p[0] - o[0], vy = p[1] - o[1], vz = p[2] - o[2], wx = r[0] - q[0], wy = r[1] - q[1], wz = r[2] - q[2];
+    const dx = (e1[0] * vx + e1[1] * vy + e1[2] * vz) - (f1[0] * wx + f1[1] * wy + f1[2] * wz);
+    const dy = (e2[0] * vx + e2[1] * vy + e2[2] * vz) - (f2[0] * wx + f2[1] * wy + f2[2] * wz);
+    const dz = (e3[0] * vx + e3[1] * vy + e3[2] * vz) - (f3[0] * wx + f3[1] * wy + f3[2] * wz);
+    return Math.hypot(dx, dy, dz); };
+  let within = 0, wn = 0, between = 0, bn = 0;
+  for (let a = 0; a < own.length; a += 3) for (let b = 0; b < own.length; b += 3) {
+    if (a === b) continue;
+    const sameHalf = (a < own.length / 2) === (b < own.length / 2);
+    const e = err(own[a], own[b]);
+    if (sameHalf) { within += e; wn++; } else { between += e; bn++; }
+  }
+  within /= Math.max(1, wn); between /= Math.max(1, bn);
+  check(within < NEAR + 4 && between > FAR / 2, `the pair regenerates the map: ${within.toFixed(1)} A within a half against ${NEAR}, ${between.toFixed(1)} A between them against ${FAR}`);
+}
 console.log(failures ? `${failures} failure(s)` : 'ok');
 process.exit(failures ? 1 : 0);

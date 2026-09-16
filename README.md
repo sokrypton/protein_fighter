@@ -204,8 +204,10 @@ strength was worked out once rather than once per residue.
 CUSTOM on either fighter's switch opens a small panel (and again, once one is loaded, to choose another). A PDB id fetches the entry from
 the RCSB and a UniProt accession the model from the AlphaFold DB, as py2Dmol's own
 fetch box takes them (an AlphaFold model comes with its per-residue pLDDT and its PAE);
-a PDB or mmCIF file from any predictor can be dropped instead; GFP, hemoglobin,
-insulin and ubiquitin are there to try. py2Dmol reads the file, the same
+a PDB or mmCIF file from any predictor can be dropped instead; GFP, hemoglobin, Top7 and
+ubiquitin are there to try, and a PDB id may name the chains to keep after its four
+characters (1TIMA, 1TIM_A, 1TIM_AB), a crystal structure often being several copies of
+the same protein. py2Dmol reads the file, the same
 parser the viewer uses, and `custom_pdb.js` makes a fighter of the C-alpha trace:
 
 - stood on its longest axis, whichever way up gives the better body;

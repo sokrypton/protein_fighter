@@ -507,13 +507,15 @@
   // double-centred squared matrix) refined by a few rounds of metric scaling. It cannot
   // be exact - 3n numbers cannot hold n^2 - and it does not need to be: measured against
   // the AlphaFold DB's own matrices, pooled to the 64-pixel map the game draws, the
-  // regenerated map is 0.5 to 3.5 A out of a 31.75 A scale (GFP 0.95, haemoglobin 0.52,
-  // insulin 3.49, FUS 1.83), which is a shade of colour on a small panel.
+  // regenerated map is 0.9 A out of a 31.75 A scale on GFP, 0.9 on haemoglobin and 2.8
+  // on the spike, which is a shade of colour on a small panel. What it cannot do is a
+  // model that is doubtful about itself everywhere at once, and those have had their
+  // doubtful stretches cut out before this is reached (cutDoubtful).
   // 🔴 AND IT IS SCALED ON A THINNED CHAIN. Both halves of it - the leading directions
   // and the metric refinement - are n-squared a pass, so a big model paid for the start
   // and not the answer: two seconds of a three-second build for the spike, and nine at
-  // the three-thousand-residue limit. The matrix is smooth at this range (it is what the
-  // displacement is smoothed along the chain for anyway), so it is solved on at most
+  // the three-thousand-residue limit. The matrix is smooth at this range, so it is
+  // solved on at most
   // four hundred residues spread through the chain and spread back between them, and the
   // fit below corrects the detail at full resolution. Fixed cost, whatever the size.
   const SCALE_CAP = 400;

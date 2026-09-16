@@ -67,7 +67,30 @@ const check = (ok, what) => { console.log((ok ? '  ok   ' : '  FAIL ') + what); 
   const conf = JSON.parse(await ev(`JSON.stringify((() => { const F = window.proteinFighter.forms.custom1; const b = F.basePlddt ? Array.from(F.basePlddt) : null, f = F.paeBase ? Array.from(F.paeBase) : null;
     const mm = a => a ? { min: +Math.min(...a).toFixed(1), max: +Math.max(...a).toFixed(1), mean: +(a.reduce((s, v) => s + v, 0) / a.length).toFixed(1) } : null;
     return { plddt: mm(b), floor: mm(f) }; })())`));
-  check(!!conf.plddt && conf.plddt.min < 90 && conf.plddt.max > 95, `GFP's own confidence is read back off its reference (${conf.plddt ? conf.plddt.min + ' to ' + conf.plddt.max + ', mean ' + conf.plddt.mean : 'missing'})`);
+  check(!!conf.plddt && conf.plddt.min < 90 && conf.plddt.max > 95, `GFP's own confidence comes through with it (${conf.plddt ? conf.plddt.min + ' to ' + conf.plddt.max + ', mean ' + conf.plddt.mean : 'missing'})`);
+  // ...and this file carries no predicted error, so there is no floor under its map: a
+  // structure with nothing to doubt has a reference that sits on it.
+  check(!!conf.floor && conf.floor.max === 0, `a file with no predicted error has no floor under its map (${conf.floor ? conf.floor.max : 'missing'})`);
+  // A model that does carry one gets it back through the form. This is the path a
+  // fetched AlphaFold model takes, and the check that was missing when the reference
+  // stopped reaching the form: the panel went blank and nothing else said so.
+  const floor = JSON.parse(await ev(`(async () => { try {
+    const G = window.proteinFighter;
+    const text = await (await fetch('tests/structures/gfp.pdb')).text();
+    const n = window.CustomPdb.caTrace(text).coords.length;
+    // a two-block error: each half of the chain sure of itself, 24 A between them
+    const pae = new Uint8Array(n * n);
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) pae[i * n + j] = ((i < n / 2) === (j < n / 2)) ? 8 : 192;
+    const built = window.CustomPdb.buildCustomFighter('synthetic', text, { pae });
+    const F = G.makeForm('probe', built.rigData);
+    const b = F.paeBase ? Array.from(F.paeBase) : null;
+    const X = built.rigData.ca_xyz, R = built.rigData.ref;
+    const moved = R.reduce((s, p, i) => s + Math.hypot(p[0] - X[i][0], p[1] - X[i][1], p[2] - X[i][2]), 0) / X.length;
+    return JSON.stringify({ max: b ? +Math.max(...b).toFixed(1) : null, nonzero: b ? b.filter(v => v > 0.01).length : 0, px: b ? b.length : 0, moved: +moved.toFixed(1), n });
+  } catch (e) { return JSON.stringify({ err: String(e && e.message || e) }); } })()`));
+  if (floor.err) check(false, `the model with a predicted error threw: ${floor.err}`);
+  check(floor.moved > 2, `a predicted error moves the reference off the model (${floor.moved} A a residue)`);
+  check(floor.nonzero > floor.px / 4 && floor.max > 5, `and comes back as the floor under the map (${floor.nonzero} of ${floor.px} pixels, up to ${floor.max} A)`);
   const form = JSON.parse(await ev(`JSON.stringify((() => { const G = window.proteinFighter, F = G.forms.custom1; return { n: F.n, special: G.SPECIAL.custom1, name: document.getElementById('name1').textContent }; })())`));
   check(form.n > 238 && form.special === 'spin' && /^GFP/.test(form.name), `P2 is ${form.name} with grown limbs (${form.n} residues), special ${form.special}`);
   // the fight: P1 walks in and strikes; P2 (the CPU, hard) fights back

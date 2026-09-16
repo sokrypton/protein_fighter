@@ -2379,7 +2379,7 @@
     resetRound();
     showPicks();
     startViewer(fighters[0].coords, fighters[1].coords);
-    window.proteinFighter = { get fighters() { return fighters; }, get mode() { return mode; }, get phase() { return phase; }, get viewer() { return viewer; }, camera: CAMERA, forms: FORMS, barrelGap, get preview() { return preview; }, updatePAE, net, view, resetRound, attack, MOVES, SPECIAL };   // for poking at from the console
+    window.proteinFighter = { makeForm, get fighters() { return fighters; }, get mode() { return mode; }, get phase() { return phase; }, get viewer() { return viewer; }, camera: CAMERA, forms: FORMS, barrelGap, get preview() { return preview; }, updatePAE, net, view, resetRound, attack, MOVES, SPECIAL };   // for poking at from the console
     $('one').disabled = false;
     if (net.guest) joinRemote(window.Net.joinId());
     requestAnimationFrame(frame);

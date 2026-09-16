@@ -619,11 +619,15 @@
       name: 'arena', style, orient: false, controls: false, play: false,
       select: false, box: false, biounit: false,
       // ortho under 0.5: a touch more perspective. detail: subdivisions per helix residue,
-      // 4 py2Dmol's default, 2 its floor: the floor here, for a chunkier, retro cartoon
-      // (and the mesh update costs in proportion); ?detail=3 or 4 on the address to compare.
+      // 4 py2Dmol's default, 2 its floor. The floor here: a chunkier, retro cartoon, and
+      // the cheapest mesh there is - 5.2 frames a second against 4.1 at 3 on a fight
+      // against 1TIM, the draw 6.9 ms against 7.7. It only became usable when py2Dmol
+      // stopped a strand's arrowhead taking stations of its own at the floor (f875aa8):
+      // before that a residue joining a strand moved the topology and the frame rebuilt.
+      // ?detail=3 or 4 on the address to compare.
       // gpuDirect (py2Dmol's default, said here so it is seen): its GL canvas sits in the
       // page under its own, rather than being copied into it every frame.
-      rendering: { width: presetWidth * RIBBON_WIDTH, ortho: 0.4, detail: +(new URLSearchParams(location.search).get("detail") || 3), gpuDirect: true },
+      rendering: { width: presetWidth * RIBBON_WIDTH, ortho: 0.4, detail: +(new URLSearchParams(location.search).get("detail") || 2), gpuDirect: true },
     });
     applyColour();
     // The fold is reassigned at most every third draw. py2Dmol caches the assignment
@@ -1884,7 +1888,7 @@
         const dpr = window.canvasDPR; window.canvasDPR = 1;
         try {
           preview = window.py2Dmol.show(el, text, { name: 'preview', style, orient: false, controls: false, play: false, select: false, box: false, biounit: false, display: { rotate: true },
-            rendering: { width: presetWidth * RIBBON_WIDTH, ortho: 0.4, detail: 3 } });
+            rendering: { width: presetWidth * RIBBON_WIDTH, ortho: 0.4, detail: 2 } });
         } finally { if (dpr === undefined) delete window.canvasDPR; else window.canvasDPR = dpr; }
         preview.setClearColor(true);
       } else preview.load(text, 'preview', false, { biounit: false });

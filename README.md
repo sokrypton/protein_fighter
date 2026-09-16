@@ -179,9 +179,12 @@ the fight at speed: the cartoon at most thirty times a second while the fight it
 steps at sixty, at a pixel ratio of 1.5 at most, and the PAE maps refreshed a quarter
 as often - a quarter as often again past a thousand residues, where each map is at its
 most expensive and there are two of them. A map samples a couple of rows per pixel of
-its own width rather than a fixed four hundred, which is what it was oversampling. Everywhere the cartoon is drawn at three subdivisions per helix residue rather
-than py2Dmol's default four, a slightly chunkier look at three quarters of the cost
-(`?detail=2`, the floor, or `4` on the address to compare). Everywhere, a frame that has fallen behind
+its own width rather than a fixed four hundred, which is what it was oversampling. Everywhere the cartoon is drawn at two subdivisions per helix residue, py2Dmol's
+floor, rather than its default four: the chunkiest, cheapest cartoon there is, 5.2
+frames a second against 4.1 at three on a fight against 1TIM (`?detail=3` or `4` on
+the address to compare). The floor only became usable when py2Dmol stopped a strand's
+arrowhead taking stations of its own there: before that a residue joining a strand
+moved the mesh's topology and every frame of a fight rebuilt it. Everywhere, a frame that has fallen behind
 steps at most three times to catch up, a moment of slow motion rather than a spiral.
 `?fps` on the address shows, under the timer, frames and draws a second and the script
 cost of each, to read off a phone.
@@ -309,7 +312,7 @@ harmonics and driven by distance walked so the feet don't skate.
   1.4.4, MIT) — the connection and the QR code, vendored so the game does not depend on
   a CDN to connect.
 - `vendor/py2Dmol.embed.min.js` — py2Dmol's embed bundle, byte-identical to the build in
-  `../py2Dmol/py2Dmol/resources/bundles/` at its commit `faee61d`. It carries the change
+  `../py2Dmol/py2Dmol/resources/bundles/` at its commit `213b83b`. It carries the change
   that lets `replaceFrame` animate without rebuilding the cartoon mesh (the camera and
   extent are held across same-size frames, and the mesh is updated in place: the
   "station" draw the game switches on), the fix for ribbon loops flickering as they

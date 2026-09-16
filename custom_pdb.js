@@ -845,33 +845,9 @@
   // lDDT between them. Nothing about a prediction travels except that structure: a plain
   // crystal structure gets one too, wobbled to the confidence such a file is given, so
   // there is no predicted-versus-not branch anywhere downstream.
-  //
-  // The displacement is SMOOTHED over each residue's neighbours before the wobble goes
-  // on. The matrix says how distant parts sit relative to one another; the fit's local
-  // noise is not that, and left in it sets a floor on local disagreement that no wobble
-  // can lift - GFP read as pLDDT 81 where the file says 97. Smoothed, the long range
-  // survives and the detail is free: 2.3 points out on GFP, 1.7 on haemoglobin, 4.6 on
-  // FUS, 8.0 on insulin, with the regenerated map 0.8 to 4.5 A of a 31.75 A scale.
-  const SMOOTH_PASSES = 8;
   function referenceFor(coords, plddts, paeFlat, breaks, own) {
     const n = coords.length;
     const u = (paeFlat && paeFlat.length) ? referenceFrom(coords, paeFlat) : Array.from({ length: n }, () => [0, 0, 0]);
-    // ...smoothed ALONG THE CHAIN, not through space. Averaging over spatial neighbours
-    // mixes the displacement of parts that touch but genuinely disagree - two domains
-    // packed against each other - and flattens exactly the error the matrix was stating:
-    // on a barrel whose two sequence halves interleave, a 24 A separation came back as
-    // 3.8. Along the chain the long range survives, the fit's local noise goes, and a
-    // chain break stops the average, two chains being two chains.
-    for (let pass = 0; pass < SMOOTH_PASSES; pass++) {
-      const next = new Array(n);
-      for (let i = 0; i < n; i++) {
-        let x = u[i][0] * 2, y = u[i][1] * 2, z = u[i][2] * 2, k = 2;
-        if (i > 0 && !(breaks && breaks.has(i - 1))) { x += u[i - 1][0]; y += u[i - 1][1]; z += u[i - 1][2]; k++; }
-        if (i < n - 1 && !(breaks && breaks.has(i))) { x += u[i + 1][0]; y += u[i + 1][1]; z += u[i + 1][2]; k++; }
-        next[i] = [x / k, y / k, z / k];
-      }
-      for (let i = 0; i < n; i++) u[i] = next[i];
-    }
     // ...and a seed wobble, so the fit has somewhere to push from. The lDDT of a
     // structure sitting exactly on the model is 1 with a flat gradient in every
     // direction; nudged off it, the fit can size each residue's disagreement. The

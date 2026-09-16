@@ -798,6 +798,24 @@
   // Remote play. Hosting: `link` streams state to the guest, who drives P2 through held[1].
   // A guest page (?join=…) runs no game of its own: it draws the host's state and sends keys.
   const net = { link: null, guest: !!window.Net?.joinId(), watch: !!window.Net?.watching(), events: [], seq: 0, lastUnfold: null, pkts: 0, bytes: 0, tick: 0, rtt: 0, dropped: false, watchers: 0 };
+  // 🔴 ONLY WHAT A LATER PACKET CANNOT SAY IS KEPT. A custom fighter arriving and a round
+  // resetting are structural: miss one and the guest is holding a different protein, or a
+  // different round, and no amount of position will put it right. Everything else - a
+  // hit, a block, a throw, a flash, a sound - is presentation over a state the host sends
+  // whole fifteen times a second, and replaying it late is worse than not at all: the
+  // sound of a punch that landed a second ago. Keeping the lot would also grow without
+  // bound while a link is down, since every sound effect is an event.
+  const UNSAID = new Set(['custom', 'reset']);
+  const keepUnsaid = (ev) => {
+    const out = [];
+    for (const e of ev || []) {
+      if (!UNSAID.has(e[0])) continue;
+      const slot = e[0] === 'custom' ? 'custom' + e[1] : e[0];   // the newest of each stands
+      const at = out.findIndex(o => (o[0] === 'custom' ? 'custom' + o[1] : o[0]) === slot);
+      if (at >= 0) out[at] = e; else out.push(e);
+    }
+    return out;
+  };
   const netEvent = (...e) => { if (net.link) net.events.push(e); };
   let fighters, wins = [0, 0], round = 1, time = 60, phase = 'ready', clock = 0, koTimer = 0, ai = 0, hitstop = 0;
   let tick = 0;   // game ticks, for effects that fire every few
@@ -2264,7 +2282,10 @@
     };
     net.events = [];
     net.tx = (net.tx || 0) + 1; net.bytes += JSON.stringify(h).length + (changed ? n : 0);
-    net.link.send({ h, u: changed ? unfold : null });
+    // ...and what could not be said is said again. A state packet may be dropped - the
+    // next one is along in a fifteenth of a second and carries the whole position - but
+    // not everything riding in it can be worked out again from a later one.
+    if (!net.link.send({ h, u: changed ? unfold : null })) net.events = keepUnsaid(h.ev).concat(net.events);
   }
   function applyState(m) {
     const { h, u } = m || {};
@@ -2370,9 +2391,15 @@
 
   // A guest joins as the player, a watcher only watches. A dropped link is tried again
   // every few seconds; the host keeps the match waiting.
+  // A guest's overlay carries no menu: overlay() shows the mode switches with it, and a
+  // guest that clicks START leaves the match it is in the middle of.
+  function waiting(title, msg) {
+    $('go').hidden = true;
+    overlay(title, msg, null);
+    $('modes').hidden = true;
+  }
   function joinRemote(id, again = false) {
-    $('modes').hidden = true; $('go').hidden = true;
-    overlay(again ? 'RECONNECTING' : 'CONNECTING', again ? 'the link dropped; trying again…' : 'to the host…', null); $('modes').hidden = true;
+    waiting(again ? 'RECONNECTING' : 'CONNECTING', again ? 'the link dropped; trying again…' : 'to the host…');
     if (net.watch) { for (const el of document.querySelectorAll('.pad')) el.hidden = true; }
     else {
       document.querySelector('.pad.left .who').textContent = 'YOU';
@@ -2383,7 +2410,16 @@
       role: net.watch ? 'watch' : 'player',
       onOpen: () => { $('title').textContent = net.watch ? 'WATCHING' : 'CONNECTED'; $('msg').textContent = 'waiting for the host'; },
       onState: applyState,
-      onClose: () => { net.send = null; setTimeout(() => joinRemote(id, true), 3000); },
+      // 🔴 SAID AT ONCE, NOT IN THREE SECONDS. The retry was what put anything on the
+      // screen, so a guest whose link went sat watching a fight that had stopped moving
+      // with nothing to say why, and three seconds is a long time to wonder whether the
+      // game has crashed. net.send is left in place across the gap: it no longer reaches
+      // the host, but it takes what the guest says into the outbox, which the next
+      // connection empties.
+      onClose: () => {
+        waiting('RECONNECTING', 'the link dropped; trying again…');
+        setTimeout(() => joinRemote(id, true), 3000);
+      },
       onError: msg => { overlay('NO CONNECTION', msg, 'RETRY'); $('go').hidden = false; $('go').onclick = () => location.reload(); },
     });
     net.send = link ? link.send : null;

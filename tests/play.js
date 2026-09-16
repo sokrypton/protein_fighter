@@ -97,6 +97,17 @@ async function pair() {
   launch(DEV); launch(DEV + 1);
   const host = await tab(DEV), guest = await tab(DEV + 1);
   await host.send('Page.navigate', { url: `http://localhost:${HTTP}/index.html${relay ? '?relay=1' : ''}` }); await sleep(4000);
+  // A CUSTOM FIGHTER BEFORE ANYONE HAS JOINED. It is the largest thing the host ever
+  // says, it goes out the moment a newcomer arrives - when the channel is at its busiest
+  // - and it is said once. Dropped, the guest holds a built-in body while the host
+  // fights a protein, and nothing on either screen says why.
+  await host.ev(`document.querySelector('[data-pick="1:custom1"]').click(); 'x'`); await sleep(300);
+  await host.ev(`(async () => { const text = await (await fetch('tests/structures/gfp.pdb')).text();
+    const dt = new DataTransfer(); dt.items.add(new File([text], 'gfp.pdb'));
+    document.getElementById('drop-zone').dispatchEvent(new DragEvent('drop', { dataTransfer: dt, bubbles: true, cancelable: true })); return 'dropped'; })()`);
+  for (let i = 0; i < 60 && (await host.ev(`document.getElementById('btn-load-custom').hidden`)); i++) await sleep(250);
+  await host.ev(`document.getElementById('btn-load-custom').click(); 'x'`); await sleep(1500);
+  check(await host.ev(`!!window.proteinFighter.forms.custom1`), 'the host loaded a custom fighter before hosting');
   await host.ev(`document.querySelector('[data-players="3"]').click(); document.getElementById('one').click(); 'hosting'`);
   let link = '';
   for (let i = 0; i < 50 && !link.startsWith('http'); i++) { await sleep(500); link = await host.ev(`document.getElementById('joinlink').value`); }
@@ -106,6 +117,17 @@ async function pair() {
   await guest.send('Page.navigate', { url: link.replace(/^https?:\/\/[^/]+/, `http://localhost:${HTTP}`) + (relay ? '&relay=1' : '') });
   let hs = {}; for (let i = 0; i < 30 && hs.phase !== 'playing'; i++) { await sleep(500); hs = JSON.parse(await state(host)); }
   check(hs.mode === 3 && hs.phase === 'playing', 'the fight started on the host when the guest connected');
+  // ...and the newcomer was given it, with the confidence that colours it
+  let got = null;
+  for (let i = 0; i < 20 && !got; i++) {
+    await sleep(500);
+    got = JSON.parse(await guest.ev(`JSON.stringify((() => { const F = window.proteinFighter.forms.custom1;
+      if (!F) return null; const b = F.basePlddt ? Array.from(F.basePlddt) : null;
+      return { n: F.n, plddt: b ? { min: +Math.min(...b).toFixed(0), max: +Math.max(...b).toFixed(0) } : null }; })())`));
+  }
+  check(!!got && got.n > 238, `the guest was given the host's custom fighter (${got ? got.n + ' residues' : 'never arrived'})`);
+  check(!!got && got.plddt && got.plddt.min < 90, `and the confidence that colours it (${got && got.plddt ? got.plddt.min + ' to ' + got.plddt.max : 'missing'})`);
+  check(await guest.ev(`window.proteinFighter.fighters[1].form.name === 'custom1'`), 'and is fighting as it, not a built-in body');
   const x0 = (await state(host).then(JSON.parse)).p2.x;
   await guest.hold('a', 2000); await guest.tap('f'); await sleep(800);   // a long hold: headless draws a few frames a second, and the fight steps at most three times a frame
   const x1 = (await state(host).then(JSON.parse)).p2.x, gs = JSON.parse(await state(guest));
@@ -145,6 +167,23 @@ async function pair() {
   const watcher = await tab(DEV + 1);
   await watcher.send('Page.navigate', { url: link.replace(/^https?:\/\/[^/]+/, `http://localhost:${HTTP}`) + '&watch=1' }); await sleep(7000);
   check(await host.ev(`window.proteinFighter.net.watchers === 1`), 'a watcher joined on the same link afterwards');
+  // THE GUEST'S CHANNEL DIES MID-FIGHT, as a phone changing network does. It comes back
+  // on its own after three seconds - and takes its seat straight back, which needs the
+  // host to know a returning challenger from a second one: the old channel still reads
+  // open for a few seconds, so a guest was turned away and spent six to nine seconds
+  // outside a fight it had never left.
+  const rx0 = await guest.ev(`window.proteinFighter.net.rx`);
+  await guest.ev(`(() => { const c = Object.values(window.Net.peer().connections).flat()[0]; try { c && c.close(); } catch {} return 'closed'; })()`);
+  await sleep(400);
+  check(await guest.ev(`document.getElementById('title').textContent`) === 'RECONNECTING', 'the guest says so at once when its link goes, not in three seconds');
+  check(await guest.ev(`document.getElementById('modes').hidden`), 'and is not offered the menu it would leave the match by');
+  let flowing = false;
+  for (let i = 0; i < 40 && !flowing; i++) { await sleep(500); flowing = (await guest.ev(`window.proteinFighter.net.rx`)) > rx0 + 3; }
+  check(flowing, 'it reconnected on its own and the host is streaming to it again');
+  check(await guest.ev(`window.proteinFighter.fighters[1].form.name === 'custom1'`), 'and it is still fighting as the host\'s protein');
+  const bx = (await state(host).then(JSON.parse)).p2.x;
+  await guest.hold('a', 2500); await sleep(700);
+  check(Math.abs((await state(host).then(JSON.parse)).p2.x - bx) > 5, 'and its keys reach the host again');
   check(host.errors.length === 0 && guest.errors.length === 0, 'no exceptions on either side' + ([...host.errors, ...guest.errors].length ? ': ' + [...host.errors, ...guest.errors].slice(0, 3).join(' | ') : ''));
   host.ws.close(); guest.ws.close(); watcher.ws.close();
 }

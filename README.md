@@ -311,6 +311,11 @@ rest from the chain, and fights with the game's own specials.
   `tests/structures/`, from Ian Anderson's fork) and the built-in scaffolds as
   files, read, rigged and posed through a punch, a kick and a walk, every bond held,
   the legs on the floor; PDB and mmCIF agree; chain breaks, the size limit and the lDDT
+- `tests/net_send.js` — run with `node`, no browser: the link's two one-way valves. The
+  host may drop a state packet on a slow channel, since the next one carries the whole
+  position, but never one carrying events, which are said once; the guest, which speaks
+  rarely, holds what it could not say until its channel comes back, newest of each kind,
+  and never a keypress
 - `tests/play_custom.js` — GFP dropped as a file in headless Chrome: read, rigged, fought, rolled
 - `tests/play.js` — plays the game in headless Chrome: a fight against the CPU with a
   walk, a block, strikes, a heat shock, a throw and a PAE click, checking each registered
@@ -318,7 +323,9 @@ rest from the chain, and fights with the game's own specials.
   checks the guest sees the round's end with no button of its own (the host refolds, and
   the guest is told so) and the host's REFOLD moves both on, drops the host's
   signaling socket mid-match and checks the match goes on, the peer comes back under the
-  same id and a watcher can still join on the same link; `--remote --relay` allows both
+  same id and a watcher can still join on the same link, and kills the guest's own data
+  channel mid-fight to check it says so at once, comes back on its own, takes its seat
+  straight back and is still holding the host's protein; `--remote --relay` allows both
   sides only the relay and checks the route taken is relay to relay, so the worker and
   Cloudflare's TURN are what is tested. Chrome runs muted. A
   minute or two, since the browser draws with software OpenGL

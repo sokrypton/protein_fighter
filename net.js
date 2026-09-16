@@ -4,6 +4,7 @@
 // the guest gets in by scanning a QR code of the host's join link (or opening it).
 (function () {
   let peer = null, conn = null, timer = 0;
+  let outbox = [], outboxFor = null;   // what this guest still has to say, and to whom
   let player = null, rtt = 0, pinger = 0;
   const watchers = new Set();
 
@@ -53,6 +54,11 @@
   // The channel keeps at most this much unsent: when the link can't keep up, packets are
   // dropped rather than queued, so the guest sees a late frame instead of an ever later one.
   const MAX_QUEUED = 48 * 1024;
+  const OUTBOX_MAX = 8;   // what a guest may be holding to say when its channel comes back
+  // Who this guest is, across its own reconnects and no further: a page that is reloaded
+  // is a new challenger, which is what a reload is for.
+  let myToken = null;
+  const whoAmI = () => (myToken || (myToken = 'g' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36)));
   // What went wrong, from the connection itself, for the message on screen.
   const why = c => {
     const pc = c && c.peerConnection;
@@ -177,10 +183,18 @@
           c.heard = performance.now();
           if (m.t === 'hello') {
             if (m.role === 'watch') { role = 'watch'; watchers.add(c); onWatcher && onWatcher(watchers.size); return; }
-            // One challenger at a time - but a challenger that has gone quiet has left,
-            // whatever its channel says, and the newcomer takes the seat.
+            // 🔴 A CHALLENGER COMING BACK IS NOT A SECOND CHALLENGER. One seat, and a
+            // newcomer waits while the one in it is still being heard from - which is
+            // right for a stranger and wrong for the guest whose link just went, because
+            // the host does not know it went. Its channel reads open for a few seconds
+            // more, so the guest reconnecting three seconds later was turned away, tried
+            // again, and took six to nine seconds to sit back down in a fight it had
+            // never left. So a guest carries a token of its own, the same across its
+            // reconnects and no one else's, and one that matches takes the seat at once.
+            c.who = m.who || null;
             if (player && player !== c) {
-              if (player.open && performance.now() - player.heard < SILENCE / 2) { try { c.close(); } catch {} return; }
+              const resuming = c.who && player.who === c.who;
+              if (!resuming && player.open && performance.now() - player.heard < SILENCE / 2) { try { c.close(); } catch {} return; }
               const old = player; player = null; try { old.close(); } catch {}
             }
             role = 'player'; player = conn = c; onGuest(); return;
@@ -194,8 +208,24 @@
       });
     };
     turnReady().then(start);
-    const to = (c, m) => { if (!c || !c.open) return; const dc = c.dataChannel; if (dc && dc.bufferedAmount > MAX_QUEUED) return; try { c.send(m); } catch (e) { console.error('send failed', e); } };
-    return { send: m => { to(player, m); for (const w of watchers) to(w, m); } };
+    // 🔴 A PACKET CARRYING EVENTS IS NOT DROPPABLE. The gate is there so a slow link does
+    // not grow a queue without bound, and a state packet may be dropped freely: another
+    // is along in a fifteenth of a second and says everything this one did. The EVENTS
+    // riding in it may not. They are one-off - a hit landing, a round resetting, a custom
+    // fighter arriving - the sender clears them whether they went or not, and nothing
+    // asks again. A guest joining while the channel was busy lost the host's custom
+    // fighter that way and fell back to a built-in body, which is drawn flat: no
+    // confidence colours, and nothing anywhere saying why.
+    const droppable = m => !(m && m.h && m.h.ev && m.h.ev.length);
+    // ...and send() says whether the player got it, so the caller can hold on to what it
+    // could not deliver rather than clearing it regardless.
+    const to = (c, m) => {
+      if (!c || !c.open) return false;
+      const dc = c.dataChannel;
+      if (dc && dc.bufferedAmount > MAX_QUEUED && droppable(m)) return false;
+      try { c.send(m); return true; } catch (e) { console.error('send failed', e); return false; }
+    };
+    return { send: m => { const went = to(player, m); for (const w of watchers) to(w, m); return went; } };
   }
 
   // Guest (or watcher): connect to the host's id and say which. State arrives on
@@ -203,6 +233,11 @@
   // the round trip (Net.rtt()).
   function join(id, { onOpen, onState, onClose, onError, role = 'player' }) {
     stop();
+    // ...and the outbox outlives the connection, because the reconnect is exactly when it
+    // is needed: the guest drops, everything here is torn down and rebuilt three seconds
+    // later, and what it was holding to say has to cross that gap. Only a new host
+    // empties it - a different game is not owed the last one's words.
+    if (outboxFor !== id) { outbox = []; outboxFor = id; }
     if (typeof Peer === 'undefined') { onError('The connection library did not load. Is the network up?'); return null; }
     const session = activeSession;
     const start = () => {
@@ -221,7 +256,8 @@
         timer = setTimeout(() => { if (!conn || !conn.open) onError(`No route to the host (${why(conn)}). Wi-Fi at both ends usually works; cellular needs a TURN relay of your own (see the README).`); }, OPEN_TIMEOUT);
         conn.on('open', () => {
           clearTimeout(timer);
-          try { conn.send({ t: 'hello', role }); } catch {}
+          try { conn.send({ t: 'hello', role, who: whoAmI() }); } catch {}
+          for (const m of outbox.splice(0)) { try { conn.send(m); } catch (e) { console.error('outbox', e); } }
           pinger = setInterval(() => { if (conn && conn.open) try { conn.send({ t: 'ping', k: performance.now(), rtt }); } catch {} }, 1000);
           // The host streams fifteen times a second; silence means the link is gone, however
           // open the channel claims to be, and closing it here is what brings the reconnect.
@@ -235,7 +271,23 @@
       });
     };
     turnReady().then(start);
-    return { send: m => { if (!conn || !conn.open) return; try { conn.send(m); } catch (e) { console.error('send failed', e); } } };
+    // 🔴 WHAT THE GUEST COULD NOT SAY WAITS IN AN OUTBOX. The guest speaks rarely and
+    // every word counts: which protein it picked, which fighter it loaded, a pause. There
+    // is no stream to carry them again, so a message sent while the channel was between
+    // connections - and the guest reconnects on its own after a silence - simply never
+    // happened, and it would sit in a fight holding a fighter the host had never heard
+    // of. Held here and said again when the channel opens. Keys are not kept: they are
+    // pressed now or not at all, and a stale one would move a fighter by itself.
+    return {
+      send: m => {
+        if (conn && conn.open) { try { conn.send(m); return true; } catch (e) { console.error('send failed', e); } }
+        if (m && m.t !== 'in' && m.t !== 'ping') {
+          const slot = outbox.findIndex(o => o.t === m.t);   // the newest of each kind stands
+          if (slot >= 0) outbox[slot] = m; else if (outbox.length < OUTBOX_MAX) outbox.push(m);
+        }
+        return false;
+      },
+    };
   }
 
   const watching = () => !!new URLSearchParams(location.search).get('watch');

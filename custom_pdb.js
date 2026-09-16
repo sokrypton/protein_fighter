@@ -538,20 +538,27 @@
       let v = new Float64Array(N);
       for (let i = 0; i < N; i++) v[i] = Math.sin(i * (k + 1) * 0.7) + 0.1;
       let lam = 0;
+      // ...until it stops moving, rather than a fixed hundred and twenty passes: the
+      // leading directions settle in a few dozen and the fit corrects what they miss
       for (let it = 0; it < 120; it++) {
         for (let i = 0; i < N; i++) { let sum = 0; const r = i * N; for (let j = 0; j < N; j++) sum += B[r + j] * v[j]; w[i] = sum; }
         for (const q of vecs) { let dot = 0; for (let i = 0; i < N; i++) dot += w[i] * q[i]; for (let i = 0; i < N; i++) w[i] -= dot * q[i]; }
         let norm = 0; for (let i = 0; i < N; i++) norm += w[i] * w[i];
         norm = Math.sqrt(norm) || 1;
         for (let i = 0; i < N; i++) v[i] = w[i] / norm;
+        const settled = it > 4 && Math.abs(norm - lam) < 1e-4 * norm;
         lam = norm;
+        if (settled) break;
       }
       vecs.push(v.slice()); vals.push(Math.max(0, lam));
     }
     const s = Array.from({ length: N }, () => [0, 0, 0]);
     for (let k = 0; k < 3; k++) { const sc = Math.sqrt(vals[k]); for (let i = 0; i < N; i++) s[i][k] = vecs[k][i] * sc; }
     // ...refined: each point moved to where every pair would put it (metric scaling)
-    for (let it = 0; it < 30; it++) {
+    // ...ten passes, not thirty. The matrix is not a Euclidean distance, so refining
+    // the fit of a three-dimensional point set to it past a point is chasing a shape
+    // that is not there; the gradient fit that follows does better from a looser start.
+    for (let it = 0; it < 10; it++) {
       const next = Array.from({ length: N }, () => [0, 0, 0]);
       for (let i = 0; i < N; i++) {
         const a = s[i];
@@ -591,7 +598,7 @@
   // with the frames recomputed every step and the lDDT's four thresholds softened into
   // sigmoids so it has a gradient at all. Both sides of a link run the same steps from
   // the same start, so both build the same structure.
-  const FIT_ITERS = 150, FIT_LR = 0.05, CONF_WEIGHT = 2500, BOND_WEIGHT = 400, TAU = 0.25, PAE_CAP = 30, B1 = 0.9, B2 = 0.99, EPS_REL = 0.1, FIT_CAP = 0.35, BOND_TOL = 0.4, RECAL = 20;
+  const FIT_ITERS = 150, FIT_LR = 0.05, CONF_WEIGHT = 2500, BOND_WEIGHT = 400, TAU = 0.25, PAE_CAP = 30, B1 = 0.9, B2 = 0.99, EPS_REL = 0.1, FIT_CAP = 0.35, BOND_TOL = 0.4, RECAL = 20, SETTLE = 15;
   const frameAt = (P, i) => {
     const n = P.length, c = Math.min(n - 2, Math.max(1, i)), a = P[c - 1], o = P[c], b = P[c + 1];
     let x1 = b[0] - o[0], y1 = b[1] - o[1], z1 = b[2] - o[2];
@@ -626,6 +633,26 @@
     for (let i = 0; i < n - 1; i++) rest[i] = dist3(coords[i], coords[i + 1]);
     const wAE = (lim && rows.length) ? 1 / (rows.length * cols.length) : 0, wP = CONF_WEIGHT / n, wB = BOND_WEIGHT / n;
     const lddt = new Float64Array(n), THR = [0.5, 1, 2, 4];
+    // The model's side of every reading never changes: each column in each row's frame,
+    // and the target, are taken once. Half the map term, gone.
+    const NC = cols.length, A = new Float32Array(rows.length * NC * 3), TGT = new Float32Array(rows.length * NC), RC = new Int32Array(rows.length);
+    for (let ri = 0; ri < rows.length; ri++) {
+      const a = rows[ri], [c, o, e1, e2, e3] = frameAt(coords, a); RC[ri] = c;
+      for (let cj = 0; cj < NC; cj++) {
+        const j = cols[cj], p = coords[j], vx = p[0] - o[0], vy = p[1] - o[1], vz = p[2] - o[2], k = (ri * NC + cj) * 3;
+        A[k] = e1[0] * vx + e1[1] * vy + e1[2] * vz; A[k + 1] = e2[0] * vx + e2[1] * vy + e2[2] * vz; A[k + 2] = e3[0] * vx + e3[1] * vy + e3[2] * vz;
+        TGT[ri * NC + cj] = at(a, j);
+      }
+    }
+    // The softened lDDT and its slope, tabled over the distance difference: four
+    // sigmoids a pair, twice a pass, were most of the fit on a large protein.
+    const TAB_STEP = 0.01, TAB_N = 1200, sTab = new Float32Array(TAB_N + 1), dTab = new Float32Array(TAB_N + 1);
+    for (let k = 0; k <= TAB_N; k++) {
+      const del = k * TAB_STEP; let sm = 0, ds = 0;
+      for (let t = 0; t < 4; t++) { const sg = 1 / (1 + Math.exp((del - THR[t]) / TAU)); sm += sg; ds -= sg * (1 - sg) / TAU; }
+      sTab[k] = sm; dTab[k] = ds;
+    }
+    const pairH = pairs ? new Float32Array(pairs.i.length) : null, dl = new Float64Array(n);
     // 🔴 AND THE SOFTENED lDDT IS KEPT HONEST AGAINST THE REAL ONE. The four thresholds
     // are counted with sigmoids so the score has a gradient, and a sigmoid is not a step:
     // driven to the confidence the file states, the softened score lands where the real
@@ -639,42 +666,42 @@
       let loss = 0;
       if (g) g.fill(0);
       for (let ri = 0; ri < rows.length; ri++) {
-        const a = rows[ri];
-        const [c, o, e1, e2, e3] = frameAt(coords, a);
+        const c = RC[ri];
         // the reference's frame at this row, kept in pieces: the gradient goes back
         // through every one of them
         const pa = P[c - 1], po = P[c], pb = P[c + 1];
-        let ux = pb[0] - po[0], uy = pb[1] - po[1], uz = pb[2] - po[2];
+        const pox = po[0], poy = po[1], poz = po[2];
+        let ux = pb[0] - pox, uy = pb[1] - poy, uz = pb[2] - poz;
         const ul = Math.hypot(ux, uy, uz) || 1;
-        const f1 = [ux / ul, uy / ul, uz / ul];
-        const px = pa[0] - po[0], py = pa[1] - po[1], pz = pa[2] - po[2];
-        const pd = px * f1[0] + py * f1[1] + pz * f1[2];
-        let qx = px - pd * f1[0], qy = py - pd * f1[1], qz = pz - pd * f1[2];
+        const f1x = ux / ul, f1y = uy / ul, f1z = uz / ul;
+        const px = pa[0] - pox, py = pa[1] - poy, pz = pa[2] - poz;
+        const pd = px * f1x + py * f1y + pz * f1z;
+        const qx = px - pd * f1x, qy = py - pd * f1y, qz = pz - pd * f1z;
         const ql = Math.hypot(qx, qy, qz) || 1;
-        const f2 = [qx / ql, qy / ql, qz / ql];
-        const f3 = [f1[1] * f2[2] - f1[2] * f2[1], f1[2] * f2[0] - f1[0] * f2[2], f1[0] * f2[1] - f1[1] * f2[0]];
-        const c3 = c * 3;
+        const f2x = qx / ql, f2y = qy / ql, f2z = qz / ql;
+        const f3x = f1y * f2z - f1z * f2y, f3y = f1z * f2x - f1x * f2z, f3z = f1x * f2y - f1y * f2x;
+        const c3 = c * 3, base = ri * NC;
         let G1x = 0, G1y = 0, G1z = 0, G2x = 0, G2y = 0, G2z = 0, G3x = 0, G3y = 0, G3z = 0;
-        for (let cj = 0; cj < cols.length; cj++) {
+        let gcx = 0, gcy = 0, gcz = 0;
+        for (let cj = 0; cj < NC; cj++) {
           const j = cols[cj];
           if (j === c) continue;
-          const p = coords[j], r = P[j];
-          const vx = p[0] - o[0], vy = p[1] - o[1], vz = p[2] - o[2];
-          const wx = r[0] - po[0], wy = r[1] - po[1], wz = r[2] - po[2];
-          const dx = (e1[0] * vx + e1[1] * vy + e1[2] * vz) - (f1[0] * wx + f1[1] * wy + f1[2] * wz);
-          const dy = (e2[0] * vx + e2[1] * vy + e2[2] * vz) - (f2[0] * wx + f2[1] * wy + f2[2] * wz);
-          const dz = (e3[0] * vx + e3[1] * vy + e3[2] * vz) - (f3[0] * wx + f3[1] * wy + f3[2] * wz);
-          const e = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6, resid = e - at(a, j);
+          const r = P[j], k = (base + cj) * 3;
+          const wx = r[0] - pox, wy = r[1] - poy, wz = r[2] - poz;
+          const dx = A[k] - (f1x * wx + f1y * wy + f1z * wz);
+          const dy = A[k + 1] - (f2x * wx + f2y * wy + f2z * wz);
+          const dz = A[k + 2] - (f3x * wx + f3y * wy + f3z * wz);
+          const e = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-6, resid = e - TGT[base + cj];
           loss += wAE * resid * resid;
           if (!g) continue;
           const sc = 2 * wAE * resid / e;
           // ...through the frame's axes, where the reading is taken
-          const gx = -sc * (f1[0] * dx + f2[0] * dy + f3[0] * dz);
-          const gy = -sc * (f1[1] * dx + f2[1] * dy + f3[1] * dz);
-          const gz = -sc * (f1[2] * dx + f2[2] * dy + f3[2] * dz);
+          const gx = -sc * (f1x * dx + f2x * dy + f3x * dz);
+          const gy = -sc * (f1y * dx + f2y * dy + f3y * dz);
+          const gz = -sc * (f1z * dx + f2z * dy + f3z * dz);
           const j3 = j * 3;
           g[j3] += gx; g[j3 + 1] += gy; g[j3 + 2] += gz;
-          g[c3] -= gx; g[c3 + 1] -= gy; g[c3 + 2] -= gz;
+          gcx += gx; gcy += gy; gcz += gz;
           // ...and on to the axes themselves: a frame that turns moves every reading in
           // its row, which is most of the loss and all of the reason a fit that held the
           // frames still could not take a step
@@ -684,19 +711,20 @@
           G3x += s3 * wx; G3y += s3 * wy; G3z += s3 * wz;
         }
         if (!g) continue;
+        g[c3] -= gcx; g[c3 + 1] -= gcy; g[c3 + 2] -= gcz;
         // x3 = x1 x x2
-        let A1x = G1x + (f2[1] * G3z - f2[2] * G3y), A1y = G1y + (f2[2] * G3x - f2[0] * G3z), A1z = G1z + (f2[0] * G3y - f2[1] * G3x);
-        const A2x = G2x + (G3y * f1[2] - G3z * f1[1]), A2y = G2y + (G3z * f1[0] - G3x * f1[2]), A2z = G2z + (G3x * f1[1] - G3y * f1[0]);
+        let A1x = G1x + (f2y * G3z - f2z * G3y), A1y = G1y + (f2z * G3x - f2x * G3z), A1z = G1z + (f2x * G3y - f2y * G3x);
+        const A2x = G2x + (G3y * f1z - G3z * f1y), A2y = G2y + (G3z * f1x - G3x * f1z), A2z = G2z + (G3x * f1y - G3y * f1x);
         // x2 = q / |q|
-        const a2d = A2x * f2[0] + A2y * f2[1] + A2z * f2[2];
-        const Qx = (A2x - a2d * f2[0]) / ql, Qy = (A2y - a2d * f2[1]) / ql, Qz = (A2z - a2d * f2[2]) / ql;
+        const a2d = A2x * f2x + A2y * f2y + A2z * f2z;
+        const Qx = (A2x - a2d * f2x) / ql, Qy = (A2y - a2d * f2y) / ql, Qz = (A2z - a2d * f2z) / ql;
         // q = p - (p.x1) x1
-        const qd = Qx * f1[0] + Qy * f1[1] + Qz * f1[2];
-        const Px = Qx - qd * f1[0], Py = Qy - qd * f1[1], Pz = Qz - qd * f1[2];
+        const qd = Qx * f1x + Qy * f1y + Qz * f1z;
+        const Px = Qx - qd * f1x, Py = Qy - qd * f1y, Pz = Qz - qd * f1z;
         A1x -= qd * px + pd * Qx; A1y -= qd * py + pd * Qy; A1z -= qd * pz + pd * Qz;
         // x1 = u / |u|
-        const a1d = A1x * f1[0] + A1y * f1[1] + A1z * f1[2];
-        const Ux = (A1x - a1d * f1[0]) / ul, Uy = (A1y - a1d * f1[1]) / ul, Uz = (A1z - a1d * f1[2]) / ul;
+        const a1d = A1x * f1x + A1y * f1y + A1z * f1z;
+        const Ux = (A1x - a1d * f1x) / ul, Uy = (A1y - a1d * f1y) / ul, Uz = (A1z - a1d * f1z) / ul;
         const bm = (c + 1) * 3, am = (c - 1) * 3;
         g[bm] += Ux; g[bm + 1] += Uy; g[bm + 2] += Uz;
         g[am] += Px; g[am + 1] += Py; g[am + 2] += Pz;
@@ -708,22 +736,27 @@
         for (let k = 0; k < K; k++) {
           const a = P[I[k]], b = P[J[k]];
           const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
-          const h = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-9, del = Math.abs(h - D[k]);
-          let sm = 0; for (let t = 0; t < 4; t++) sm += 1 / (1 + Math.exp((del - THR[t]) / TAU));
+          const h = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-9; pairH[k] = h;
+          const del = Math.abs(h - D[k]), ti = del / TAB_STEP, t0 = ti | 0;
+          const sm = t0 >= TAB_N ? 0 : sTab[t0] + (sTab[t0 + 1] - sTab[t0]) * (ti - t0);
           lddt[I[k]] += sm; lddt[J[k]] += sm;
         }
         for (let i = 0; i < n; i++) { lddt[i] = cnt[i] ? lddt[i] / (4 * cnt[i]) : 1; const r = lddt[i] - want[i] - bias[i]; loss += wP * r * r; }
-        if (g) for (let k = 0; k < K; k++) {
-          const i = I[k], j = J[k];
-          const dLds = 2 * wP * ((lddt[i] - want[i] - bias[i]) / (4 * cnt[i]) + (lddt[j] - want[j] - bias[j]) / (4 * cnt[j]));
-          if (!dLds) continue;
-          const a = P[i], b = P[j];
-          const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
-          const h = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1e-9, del = Math.abs(h - D[k]);
-          let ds = 0; for (let t = 0; t < 4; t++) { const sg = 1 / (1 + Math.exp((del - THR[t]) / TAU)); ds -= sg * (1 - sg) / TAU; }
-          const f = dLds * ds * (h >= D[k] ? 1 : -1) / h, i3 = i * 3, j3 = j * 3;
-          g[j3] += f * dx; g[j3 + 1] += f * dy; g[j3 + 2] += f * dz;
-          g[i3] -= f * dx; g[i3 + 1] -= f * dy; g[i3 + 2] -= f * dz;
+        if (g) {
+          // each residue's residual, scaled once
+          for (let i = 0; i < n; i++) dl[i] = cnt[i] ? 2 * wP * (lddt[i] - want[i] - bias[i]) / (4 * cnt[i]) : 0;
+          for (let k = 0; k < K; k++) {
+            const i = I[k], j = J[k], dLds = dl[i] + dl[j];
+            if (!dLds) continue;
+            const h = pairH[k], del = Math.abs(h - D[k]), ti = del / TAB_STEP, t0 = ti | 0;
+            if (t0 >= TAB_N) continue;
+            const ds = dTab[t0] + (dTab[t0 + 1] - dTab[t0]) * (ti - t0);
+            const a = P[i], b = P[j];
+            const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+            const f = dLds * ds * (h >= D[k] ? 1 : -1) / h, i3 = i * 3, j3 = j * 3;
+            g[j3] += f * dx; g[j3 + 1] += f * dy; g[j3 + 2] += f * dz;
+            g[i3] -= f * dx; g[i3 + 1] -= f * dy; g[i3 + 2] -= f * dz;
+          }
         }
       }
       for (let i = 0; i < n - 1; i++) {
@@ -758,10 +791,12 @@
       L.score(pairs, ref, hard, coords);
       for (let i = 0; i < n; i++) bias[i] = lddt[i] - hard[i];
     };
+    let mark = Infinity, markAt = 0;
     let loss = evaluate(ref, g);
     recalibrate();
     loss = evaluate(ref, g);
     let scale = FIT_LR;
+    mark = loss;
     for (let it = 1; it <= FIT_ITERS; it++) {
       // 🔴 PRECONDITIONED, OR THE FIT CANNOT MOVE AT ALL. A residue that a sampled row's
       // frame is built from carries the whole of that row's gradient and is a hundred
@@ -793,6 +828,13 @@
       if (!took) { if (scale < 1e-4) break; }
       else if (it % RECAL === 0) { recalibrate(); loss = evaluate(ref, g); }
       else loss = evaluate(ref, g);
+      // ...and it stops when it has stopped getting anywhere. A folded model is settled
+      // in sixty steps and a disordered one is still moving at a hundred and fifty, so
+      // the count is the loss's to decide, not a number chosen for the worst case.
+      if (it - markAt >= SETTLE) {
+        if (mark - loss < 2e-3 * Math.abs(mark)) break;
+        mark = loss; markAt = it;
+      }
     }
     return ref;
   }

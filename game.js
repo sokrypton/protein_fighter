@@ -1496,30 +1496,38 @@
       const e = Math.min(PAE_MAX, Math.max(live, paeBase ? paeBase[b] : 0));   // the model's own error is the floor
       f.pae[b] = f.pae[b] * 0.5 + e * 0.5;   // barely smoothed, so one frame's twitch does not flicker
     }
-    // ...and the lDDT on the same cadence: what each residue's surroundings within its
-    // rigid part still measure as they did at the bell, and from it the pLDDT shown.
-    if (f.pairs) {
-      // Scored raw, then smoothed two ways so the colours do not flicker: along the
-      // chain (1-2-1 over a residue and its bonded neighbours, never across a break),
-      // since a residue in a few pairs steps in quarters as one pair crosses a
-      // threshold; and over time, each residue's shown score easing toward the raw one.
-      const raw = f.lddtRaw || (f.lddtRaw = new Float32Array(N)), sm = f.lddtSmooth || (f.lddtSmooth = new Float32Array(N)), BREAK = f.form.breakAt;
-      window.LDDT.score(f.pairs, P, raw, f.poseRef);
-      for (let i = 0; i < N; i++) {
-        let v = 2 * raw[i], w = 2;
-        if (i > 0 && !BREAK[i - 1]) { v += raw[i - 1]; w++; }
-        if (i < N - 1 && !BREAK[i]) { v += raw[i + 1]; w++; }
-        sm[i] = v / w;
-      }
-      for (let i = 0; i < N; i++) f.lddt[i] += (sm[i] - f.lddt[i]) * LDDT_EASE;
-      // A residue the model itself had loose (low pLDDT) hangs off the pose by nature,
-      // which its base already says: it shows its base, and only a folded residue is
-      // marked down by what has come away from the pose. A body still gathering itself
-      // up at a round's start (f.settle, held loosely in body()) is not damaged either,
-      // so what it lags the pose by while it gathers is excused the same way.
-      const base = f.basePlddt, u0 = f.initUnfold, gather = 0.96 * Math.sqrt(f.settle || 0);
-      for (let i = 0; i < N; i++) { const loose = Math.max(gather, u0 ? u0[i] : 0); f.shown[i] = (base ? base[i] : 100) * (f.lddt[i] * (1 - loose) + loose); }
+  }
+  // 🔴 THE CONFIDENCE IS NOT THE MAP'S PASSENGER. What each residue's surroundings within
+  // its rigid part still measure as they did at the bell, and from it the pLDDT shown -
+  // the colours on the bodies and the number on the HUD. This stood inside updatePAE,
+  // which a SHORT SCREEN SKIPS ENTIRELY to spare a phone the map's row-by-column work,
+  // so a phone on its side - and any window under 520 pixels tall - fought in colours
+  // frozen at the bell that never darkened where a blow landed, with the two panels
+  // beside it dead. It is one pass over the pairs, a fraction of the map's cost, and it
+  // runs whatever the screen is.
+  function updateConfidence(f) {
+    if (!f.pairs) return;
+    const N = f.form.n, P = f.coords;
+    // Scored raw, then smoothed two ways so the colours do not flicker: along the
+    // chain (1-2-1 over a residue and its bonded neighbours, never across a break),
+    // since a residue in a few pairs steps in quarters as one pair crosses a
+    // threshold; and over time, each residue's shown score easing toward the raw one.
+    const raw = f.lddtRaw || (f.lddtRaw = new Float32Array(N)), sm = f.lddtSmooth || (f.lddtSmooth = new Float32Array(N)), BREAK = f.form.breakAt;
+    window.LDDT.score(f.pairs, P, raw, f.poseRef);
+    for (let i = 0; i < N; i++) {
+      let v = 2 * raw[i], w = 2;
+      if (i > 0 && !BREAK[i - 1]) { v += raw[i - 1]; w++; }
+      if (i < N - 1 && !BREAK[i]) { v += raw[i + 1]; w++; }
+      sm[i] = v / w;
     }
+    for (let i = 0; i < N; i++) f.lddt[i] += (sm[i] - f.lddt[i]) * LDDT_EASE;
+    // A residue the model itself had loose (low pLDDT) hangs off the pose by nature,
+    // which its base already says: it shows its base, and only a folded residue is
+    // marked down by what has come away from the pose. A body still gathering itself
+    // up at a round's start (f.settle, held loosely in body()) is not damaged either,
+    // so what it lags the pose by while it gathers is excused the same way.
+    const base = f.basePlddt, u0 = f.initUnfold, gather = 0.96 * Math.sqrt(f.settle || 0);
+    for (let i = 0; i < N; i++) { const loose = Math.max(gather, u0 ? u0[i] : 0); f.shown[i] = (base ? base[i] : 100) * (f.lddt[i] * (1 - loose) + loose); }
   }
   function drawPAE(f, i) {
     const canvas = $('pae' + i), PB = f.form.pb;
@@ -2165,7 +2173,14 @@
       // ...and a quarter as often again past a thousand residues, where a map costs most
       // and its two fighters take turns: each map redrawn about five times a second.
       const every = paeSlow ? 4 : drawHalf ? 2 : 1;
-      if (hitstop <= 0 && drawn % every === 0 && !SIDE_PLATES.matches) { const i = (drawn / every) & 1, f = fighters[i]; updatePAE(f); drawPAE(f, i); }
+      if (hitstop <= 0 && drawn % every === 0) {
+        const i = (drawn / every) & 1, f = fighters[i];
+        updateConfidence(f);   // the colours: on show at every size, so always worked out
+        // ...and the map only where there is a panel to draw it into. A screen under 520
+        // pixels tall hides them (index.html), having no room, so their row-by-column
+        // work is waste there - but it took the colours down with it until they parted.
+        if (!SIDE_PLATES.matches) { updatePAE(f); drawPAE(f, i); }
+      }
       drawn++;
     }
     if (net.link && (moved ? ++net.seq % 4 === 0 : (phase === 'paused' && ++net.seq % 8 === 0))) sendState();   // 15 packets/s while active, heartbeat while paused
@@ -2379,7 +2394,7 @@
     resetRound();
     showPicks();
     startViewer(fighters[0].coords, fighters[1].coords);
-    window.proteinFighter = { makeForm, get fighters() { return fighters; }, get mode() { return mode; }, get phase() { return phase; }, get viewer() { return viewer; }, camera: CAMERA, forms: FORMS, barrelGap, get preview() { return preview; }, updatePAE, net, view, resetRound, attack, MOVES, SPECIAL };   // for poking at from the console
+    window.proteinFighter = { makeForm, updateConfidence, get fighters() { return fighters; }, get mode() { return mode; }, get phase() { return phase; }, get viewer() { return viewer; }, camera: CAMERA, forms: FORMS, barrelGap, get preview() { return preview; }, updatePAE, net, view, resetRound, attack, MOVES, SPECIAL };   // for poking at from the console
     $('one').disabled = false;
     if (net.guest) joinRemote(window.Net.joinId());
     requestAnimationFrame(frame);

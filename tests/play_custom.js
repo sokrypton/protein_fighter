@@ -111,6 +111,20 @@ const check = (ok, what) => { console.log((ok ? '  ok   ' : '  FAIL ') + what); 
   check(sawSpin, 'GFP spun');
   check(after.finite && after.minY > -5, `every coordinate finite and above the floor (lowest ${after.minY.toFixed(1)})`);
   check(/pLDDT \d+/.test(after.plddt[1]), `the HUD shows GFP's pLDDT (${after.plddt[1]})`);
+  // A SHORT SCREEN STILL COLOURS BY CONFIDENCE. A phone on its side is under 520 pixels
+  // tall, where the two map panels are hidden for want of room - and the work that
+  // updates them used to carry the lDDT with it, so the bodies fought in the colours
+  // they were dealt at the bell and never darkened where a blow landed.
+  await send('Emulation.setDeviceMetricsOverride', { width: 900, height: 420, deviceScaleFactor: 1, mobile: false });
+  await sleep(1200);
+  const short0 = JSON.parse(await ev(`JSON.stringify((() => { const f = window.proteinFighter.fighters[1];
+    return { shortScreen: matchMedia('(max-height: 520px)').matches, under90: Array.from(f.shown).filter(v => v < 90).length }; })())`));
+  check(short0.shortScreen, 'the screen is a phone\'s on its side (under 520px tall)');
+  await ev(`(() => { const f = window.proteinFighter.fighters[1]; for (let i = 120; i < 260 && i < f.form.n; i++) f.unfold[i] = 0.9; return 'x'; })()`);
+  await sleep(2500);
+  const short1 = JSON.parse(await ev(`JSON.stringify((() => { const f = window.proteinFighter.fighters[1];
+    return { under90: Array.from(f.shown).filter(v => v < 90).length, lowest: +Math.min(...f.shown).toFixed(0) }; })())`));
+  check(short1.under90 > short0.under90 + 20, `damage still darkens the bodies there (${short0.under90} residues under 90 → ${short1.under90}, lowest ${short1.lowest})`);
   check(!errors.length, 'no exceptions or console errors' + (errors.length ? ': ' + errors[0].slice(0, 200) : ''));
   ws.close(); chrome.kill(); server.kill();
   console.log(failures ? `${failures} failure(s)` : 'ok');

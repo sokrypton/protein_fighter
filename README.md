@@ -340,7 +340,7 @@ harmonics and driven by distance walked so the feet don't skate.
   1.4.4, MIT) — the connection and the QR code, vendored so the game does not depend on
   a CDN to connect.
 - `vendor/py2Dmol.embed.min.js` — py2Dmol's embed bundle, byte-identical to the build in
-  `../py2Dmol/py2Dmol/resources/bundles/` at its commit `1db6543`. It carries the change
+  `../py2Dmol/py2Dmol/resources/bundles/` at its commit `f480c1b`. It carries the change
   that lets `replaceFrame` animate without rebuilding the cartoon mesh (the camera and
   extent are held across same-size frames, and the mesh is updated in place: the
   "station" draw the game switches on), the fix for ribbon loops flickering as they
@@ -354,5 +354,23 @@ harmonics and driven by distance walked so the feet don't skate.
   its element's size, so a resize redraws at the new size the same frame instead of the
   game rebuilding the viewer after it, and `py2Dmol.paeFromJSON`, the reader for a model's
   PAE JSON
+
+  Since then it also carries two things measured against this game and one
+  against a sampler trajectory: a loop takes its face from its own local
+  curvature again rather than carrying the neighbouring element's along the
+  whole run, so a band of ribbon no longer turns over between frames as a
+  fighter unfolds (plainest in the light theme's `richardson`; the dark theme's
+  `3d` has almost no pale inner face to swap, and replaying one recorded fight
+  in both bundles measures 27.7 oscillating cells a step against 26.5, which is
+  noise); a structure with a ligand no longer loses the in-place path outright,
+  which this game never hit because its scene is pure ribbon; and the viewer's
+  two boxes became slots with tabs, which a `controls: false` embed like this
+  one does not mount.
+
+  And, from `f480c1b`, arrowheads on short strands: a one-residue sheet draws
+  as loop, a two-residue strand is a proper arrow, and the loop after an arrow
+  is joined to it rather than starting as an open tube - at the lowest Detail
+  the head ends square at the loop's width and the loop carries straight on.
+  None of it changes a station count, so the in-place animation path is kept.
 
 To update py2Dmol, copy a newer `py2Dmol.embed.min.js` over the vendored one.
